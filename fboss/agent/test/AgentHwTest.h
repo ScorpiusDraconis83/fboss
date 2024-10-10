@@ -120,11 +120,17 @@ class AgentHwTest : public ::testing::Test {
   std::vector<PortID> masterLogicalPortIds() const;
   std::vector<PortID> masterLogicalPortIds(
       const std::set<cfg::PortType>& portTypes) const;
+  std::vector<PortID> masterLogicalPortIds(
+      const std::set<cfg::PortType>& portTypes,
+      SwitchID switchId) const;
   std::vector<PortID> masterLogicalInterfacePortIds() const {
     return masterLogicalPortIds({cfg::PortType::INTERFACE_PORT});
   }
   std::vector<PortID> masterLogicalFabricPortIds() const {
     return masterLogicalPortIds({cfg::PortType::FABRIC_PORT});
+  }
+  std::vector<PortID> masterLogicalFabricPortIds(SwitchID switchId) const {
+    return masterLogicalPortIds({cfg::PortType::FABRIC_PORT}, switchId);
   }
   void setSwitchDrainState(
       const cfg::SwitchConfig& curConfig,
@@ -202,6 +208,7 @@ class AgentHwTest : public ::testing::Test {
 
   SwitchID switchIdForPort(PortID port) const;
   const HwAsic* hwAsicForPort(PortID port) const;
+  const HwAsic* hwAsicForSwitch(SwitchID switchID) const;
 
   void populateArpNeighborsToCache(const std::shared_ptr<Interface>& interface);
   void populateNdpNeighborsToCache(const std::shared_ptr<Interface>& interface);

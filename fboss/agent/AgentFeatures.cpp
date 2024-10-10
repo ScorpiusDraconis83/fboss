@@ -43,6 +43,14 @@ DEFINE_bool(
     dsf_subscribe_patch,
     false,
     "Subscribe to remote FSDB using Patch apis");
+DEFINE_int32(
+    dsf_subscriber_reconnect_thread_heartbeat_ms,
+    1000,
+    "DSF subscriber reconnect thread heartbeat interval in msec");
+DEFINE_int32(
+    dsf_subscriber_stream_thread_heartbeat_ms,
+    1000,
+    "DSF subscriber stream thread heartbeat interval in msec");
 // Remote neighbor entries are always flushed to avoid blackholing the traffic.
 // However, by default, remote{systemPorts, Rifs} are not flushed but marked
 // STALE in the software. This is to avoid hardware programmign churn.
@@ -116,3 +124,19 @@ DEFINE_bool(
     "Enable wrong fabric connection. Done via SDK");
 
 DEFINE_bool(dsf_edsw_platform_mapping, false, "Use EDSW platform mapping");
+
+DEFINE_bool(
+    exit_for_any_hw_disconnect,
+    false,
+    "Flag to indicate whether SwSwitch will crash if any hw switch connection is lost. This will be used in tests to ensure all hw agent running.");
+
+DEFINE_bool(
+    enable_balanced_intput_mode,
+    true,
+    "Enable balanced input mode on fabric devices");
+
+DEFINE_int32(
+    hw_agent_connection_timeout_ms,
+    0,
+    "Time to wait for HwSwitch to connect before SwSwitch exits. "
+    "By default, SwSwitch waits forever and hence default value is 0.");

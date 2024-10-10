@@ -145,16 +145,19 @@ class Mirror : public ThriftStructNode<Mirror, state::MirrorFields> {
       std::optional<folly::IPAddress> srcIp = std::nullopt,
       std::optional<TunnelUdpPorts> udpPorts = std::nullopt,
       uint8_t dscp = cfg::switch_config_constants::DEFAULT_MIRROR_DSCP_,
-      bool truncate = false);
+      bool truncate = false,
+      std::optional<uint32_t> samplingRate = std::nullopt);
   enum Type { SPAN = 1, ERSPAN = 2, SFLOW = 3 };
   std::string getID() const;
   std::optional<folly::IPAddress> getDestinationIp() const;
+  std::optional<PortID> getEgressPort() const;
   std::optional<folly::IPAddress> getSrcIp() const;
   std::optional<TunnelUdpPorts> getTunnelUdpPorts() const;
   std::optional<MirrorTunnel> getMirrorTunnel() const;
   uint8_t getDscp() const;
   bool getTruncate() const;
   void setTruncate(bool truncate);
+  void setEgressPort(PortID egressPort);
   void setMirrorTunnel(const MirrorTunnel& tunnel);
   void setSwitchId(SwitchID switchId);
   void setDestinationMac(const folly::MacAddress& dstMac);
@@ -164,6 +167,7 @@ class Mirror : public ThriftStructNode<Mirror, state::MirrorFields> {
   bool isResolved() const;
   void setEgressPortDesc(const PortDescriptor& egressPortDesc);
   std::optional<PortDescriptor> getEgressPortDesc() const;
+  std::optional<uint32_t> getSamplingRate() const;
 
   Type type() const;
 

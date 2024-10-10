@@ -56,8 +56,6 @@ struct ModbusDeviceInfo {
   uint8_t deviceAddress = 0;
   std::string deviceType{"Unknown"};
   uint32_t baudrate = 0;
-  uint32_t preferredBaudrate = 0;
-  uint32_t defaultBaudrate = 0;
   ModbusDeviceMode mode = ModbusDeviceMode::ACTIVE;
   uint32_t crcErrors = 0;
   uint32_t timeouts = 0;
@@ -86,27 +84,21 @@ class ModbusDevice {
   Modbus& interface_;
   int numCommandRetries_;
   ModbusDeviceRawData info_;
+  std::vector<RegisterStoreSpan> reloadPlan_{};
   mutable std::shared_mutex infoMutex_{};
   std::vector<ModbusSpecialHandler> specialHandlers_{};
-  const BaudrateConfig& baudConfig_;
   bool setBaudEnabled_ = true;
-  std::atomic<bool> singleShotReload_{false};
+  const RegisterMap& registerMap_;
+  std::atomic<bool> singleShotReload_{true};
   std::atomic<bool> exclusiveMode_{false};
 
   void handleCommandFailure(std::exception& baseException);
 
   std::tuple<uint32_t, Parity> getDeviceConfig();
 
-  bool setBaudrateAllowed(uint32_t baud);
-  void setBaudrate(uint32_t baud);
-  void setDefaultBaudrate() {
-    setBaudrate(info_.defaultBaudrate);
-  }
-  void setPreferredBaudrate() {
-    setBaudrate(info_.preferredBaudrate);
-  }
-
-  bool reloadRegister(RegisterStore& registerStore, bool singleShot);
+  void forceReloadRegister(RegisterStore& registerStore, time_t reloadTime);
+  void forceReloadPlan();
+  bool reloadRegisterSpan(RegisterStoreSpan& span, bool singleShot);
 
  protected:
   virtual time_t getCurrentTime() {
@@ -119,9 +111,7 @@ class ModbusDevice {
       uint8_t deviceAddress,
       const RegisterMap& registerMap,
       int numCommandRetries = 5);
-  virtual ~ModbusDevice() {
-    setDefaultBaudrate();
-  }
+  virtual ~ModbusDevice() {}
 
   virtual void
   command(Msg& req, Msg& resp, ModbusTime timeout = ModbusTime::zero());
@@ -153,7 +143,9 @@ class ModbusDevice {
       std::vector<FileRecord>& records,
       ModbusTime timeout = ModbusTime::zero());
 
-  void reloadRegisters();
+  // Reloads all registers whose is pending a reload
+  // based on their configured reload interval.
+  void reloadAllRegisters();
 
   bool isActive() const {
     return info_.mode == ModbusDeviceMode::ACTIVE;
@@ -182,6 +174,14 @@ class ModbusDevice {
   ModbusDeviceValueData getValueData(
       const ModbusRegisterFilter& filter = {},
       bool latestValueOnly = false) const;
+
+  // Reloads requested registers in-place (blocking) ignoring
+  // their configured reload interval.
+  void forceReloadRegisters(const ModbusRegisterFilter& filter);
+
+  const RegisterMap& getRegisterMap() const {
+    return registerMap_;
+  }
 };
 
 } // namespace rackmon

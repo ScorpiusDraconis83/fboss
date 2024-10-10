@@ -26,6 +26,7 @@ add_library(fan_service_lib
   fboss/platform/fan_service/ControlLogic.cpp
   fboss/platform/fan_service/FanServiceHandler.cpp
   fboss/platform/fan_service/FsdbSensorSubscriber.cpp
+  fboss/platform/fan_service/PidLogic.cpp
   fboss/platform/fan_service/SensorData.cpp
   fboss/platform/fan_service/Utils.cpp
   fboss/platform/fan_service/oss/FsdbSensorSubscriber.cpp
@@ -37,8 +38,10 @@ target_link_libraries(fan_service_lib
   product_info
   common_file_utils
   platform_config_lib
+  platform_name_lib
   platform_utils
   fan_service_config_types_cpp2
+  gpiod_line
   sensor_service_cpp2
   fan_service_cpp2
   Folly::folly
@@ -70,6 +73,8 @@ add_executable(fan_service_sw_test
 target_link_libraries(fan_service_sw_test
   fan_service_lib
   Folly::folly
+  ${LIBGPIOD}
+  gpiod_line
   ${GTEST}
   ${LIBGMOCK_LIBRARIES}
 )

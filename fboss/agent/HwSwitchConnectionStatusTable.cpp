@@ -8,6 +8,7 @@
  *
  */
 #include "fboss/agent/HwSwitchConnectionStatusTable.h"
+#include "fboss/agent/AgentFeatures.h"
 #include "fboss/agent/SwSwitch.h"
 #include "fboss/agent/SwitchStats.h"
 
@@ -47,6 +48,11 @@ bool HwSwitchConnectionStatusTable::disconnected(SwitchID switchId) {
   if (connectedSwitches_.empty()) {
     XLOG(FATAL) << "No active HwSwitch connections";
   }
+  if (FLAGS_exit_for_any_hw_disconnect) {
+    XLOG(FATAL)
+        << "exit_for_any_hw_disconnect is enabled. Received disconnect from "
+        << switchId << ".";
+  }
   auto switchIndex =
       sw_->getSwitchInfoTable().getSwitchIndexFromSwitchId(switchId);
   sw_->stats()->hwAgentConnectionStatus(switchIndex, false /*connected*/);
@@ -58,10 +64,21 @@ bool HwSwitchConnectionStatusTable::waitUntilHwSwitchConnected() {
   if (!connectedSwitches_.empty()) {
     return true;
   }
-  hwSwitchConnectedCV_.wait(lk, [this] {
-    return !connectedSwitches_.empty() || connectionWaitCancelled_;
-  });
-  return !connectionWaitCancelled_;
+  if (FLAGS_hw_agent_connection_timeout_ms != 0) {
+    hwSwitchConnectedCV_.wait_for(
+        lk,
+        std::chrono::milliseconds(FLAGS_hw_agent_connection_timeout_ms),
+        [this] {
+          return !connectedSwitches_.empty() || connectionWaitCancelled_;
+        });
+    return !connectedSwitches_.empty() && !connectionWaitCancelled_;
+  } else {
+    // Wait forever for HwSwitch to connect
+    hwSwitchConnectedCV_.wait(lk, [this] {
+      return !connectedSwitches_.empty() || connectionWaitCancelled_;
+    });
+    return !connectionWaitCancelled_;
+  }
 }
 
 void HwSwitchConnectionStatusTable::cancelWait() {

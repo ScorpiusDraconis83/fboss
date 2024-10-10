@@ -109,31 +109,31 @@ void HwTransceiverUtils::verifyPortNameToLaneMap(
         break;
       case MediaInterfaceCode::FR4_2x400G:
       case MediaInterfaceCode::DR4_2x400G:
-        if (profile ==
-            cfg::PortProfileID::PROFILE_400G_4_PAM4_RS544X2N_OPTICAL) {
-          if (std::find(
-                  hostLaneMap[portName].begin(),
-                  hostLaneMap[portName].end(),
-                  0) != hostLaneMap[portName].end()) {
-            // When lane 0 is one of the host lanes, the media lanes are
-            // expected to be 0,1,2,3.
-            expectedMediaLanes = {0, 1, 2, 3};
-          } else {
-            expectedMediaLanes = {4, 5, 6, 7};
-          }
-        } else if (
-            profile ==
-                cfg::PortProfileID::PROFILE_106POINT25G_1_PAM4_RS544_OPTICAL ||
-            profile == cfg::PortProfileID::PROFILE_100G_1_PAM4_RS544_OPTICAL) {
-          expectedMediaLanes = {*hostLaneMap[portName].begin()};
-        } else if (
-            profile ==
-            cfg::PortProfileID::PROFILE_800G_8_PAM4_RS544X2N_OPTICAL) {
-          expectedMediaLanes = {0, 1, 2, 3, 4, 5, 6, 7};
-        } else {
-          throw FbossError(
-              "Unhandled profile ",
-              apache::thrift::util::enumNameSafe(profile));
+        switch (profile) {
+          case cfg::PortProfileID::PROFILE_400G_4_PAM4_RS544X2N_OPTICAL:
+          case cfg::PortProfileID::PROFILE_200G_4_PAM4_RS544X2N_OPTICAL:
+            if (std::find(
+                    hostLaneMap[portName].begin(),
+                    hostLaneMap[portName].end(),
+                    0) != hostLaneMap[portName].end()) {
+              // When lane 0 is one of the host lanes, the media lanes are
+              // expected to be 0,1,2,3.
+              expectedMediaLanes = {0, 1, 2, 3};
+            } else {
+              expectedMediaLanes = {4, 5, 6, 7};
+            }
+            break;
+          case cfg::PortProfileID::PROFILE_106POINT25G_1_PAM4_RS544_OPTICAL:
+          case cfg::PortProfileID::PROFILE_100G_1_PAM4_RS544_OPTICAL:
+            expectedMediaLanes = {*hostLaneMap[portName].begin()};
+            break;
+          case cfg::PortProfileID::PROFILE_800G_8_PAM4_RS544X2N_OPTICAL:
+            expectedMediaLanes = {0, 1, 2, 3, 4, 5, 6, 7};
+            break;
+          default:
+            throw FbossError(
+                "Unhandled profile ",
+                apache::thrift::util::enumNameSafe(profile));
         }
         break;
       case MediaInterfaceCode::FR1_100G:
@@ -197,7 +197,7 @@ void HwTransceiverUtils::verifyTransceiverSettings(
     verifyOpticsSettings(tcvrState, portName, profile);
   }
 
-  verifyMediaInterfaceCompliance(tcvrState, profile);
+  verifyMediaInterfaceCompliance(tcvrState, profile, portName);
 
   if (profile != cfg::PortProfileID::PROFILE_53POINT125G_1_PAM4_RS545_COPPER &&
       profile != cfg::PortProfileID::PROFILE_53POINT125G_1_PAM4_RS545_OPTICAL) {
@@ -277,7 +277,8 @@ void HwTransceiverUtils::verifyOpticsSettings(
 
 void HwTransceiverUtils::verifyMediaInterfaceCompliance(
     const TcvrState& tcvrState,
-    cfg::PortProfileID profile) {
+    cfg::PortProfileID profile,
+    const std::string& portName) {
   auto settings = apache::thrift::can_throw(*tcvrState.settings());
   auto mgmtInterface =
       apache::thrift::can_throw(*tcvrState.transceiverManagementInterface());
@@ -285,7 +286,14 @@ void HwTransceiverUtils::verifyMediaInterfaceCompliance(
       mgmtInterface == TransceiverManagementInterface::SFF8472 ||
       mgmtInterface == TransceiverManagementInterface::SFF ||
       mgmtInterface == TransceiverManagementInterface::CMIS);
-  auto mediaInterfaces = apache::thrift::can_throw(*settings.mediaInterface());
+  auto allMediaInterfaces =
+      apache::thrift::can_throw(*settings.mediaInterface());
+  std::vector<MediaInterfaceId> mediaInterfaces;
+  // Filter out the mediaInterfaces for this specific port
+  for (auto mediaLane : tcvrState.portNameToMediaLanes()->at(portName)) {
+    ASSERT_TRUE(mediaLane < allMediaInterfaces.size());
+    mediaInterfaces.push_back(allMediaInterfaces[mediaLane]);
+  }
 
   switch (profile) {
     case cfg::PortProfileID::PROFILE_10G_1_NRZ_NOFEC_OPTICAL:
@@ -610,5 +618,31 @@ void HwTransceiverUtils::verifyDiagsCapability(
       *tcvrState.port(),
       " is using unrecognized transceiverManagementInterface:",
       apache::thrift::util::enumNameSafe(*mgmtInterface));
+}
+
+void HwTransceiverUtils::verifyDatapathResetTimestamp(
+    const std::string& portName,
+    const TcvrState& tcvrState,
+    const TcvrStats& tcvrStats,
+    time_t timeReference,
+    bool expectedReset) {
+  auto mgmtInterface =
+      apache::thrift::can_throw(tcvrState.transceiverManagementInterface());
+  auto cable = apache::thrift::can_throw(tcvrState.cable());
+  if (mgmtInterface != TransceiverManagementInterface::CMIS ||
+      cable->get_transmitterTech() == TransmitterTechnology::COPPER) {
+    // Datapath reset timestamp is only supported for CMIS optical modules
+    return;
+  }
+  auto& datapathResetTimestamp = *tcvrStats.lastDatapathResetTime();
+  if (expectedReset) {
+    ASSERT_TRUE(
+        datapathResetTimestamp.find(portName) != datapathResetTimestamp.end());
+    EXPECT_GT(datapathResetTimestamp.at(portName), timeReference);
+  } else {
+    if (datapathResetTimestamp.find(portName) != datapathResetTimestamp.end()) {
+      EXPECT_LE(datapathResetTimestamp.at(portName), timeReference);
+    }
+  }
 }
 } // namespace facebook::fboss::utility

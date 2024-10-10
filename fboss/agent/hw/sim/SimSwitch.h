@@ -79,6 +79,10 @@ class SimSwitch : public HwSwitch {
     return HwSwitchWatermarkStats{};
   }
 
+  HwResourceStats getResourceStats() const override {
+    return HwResourceStats{};
+  }
+
   std::vector<EcmpDetails> getAllEcmpDetails() const override {
     return {};
   }
@@ -154,6 +158,8 @@ class SimSwitch : public HwSwitch {
       folly::MacAddress /*mac*/) const override {
     return 0;
   }
+
+  void injectSwitchReachabilityChangeNotification() override {}
 
  private:
   void switchRunStateChangedImpl(SwitchRunState newState) override {}

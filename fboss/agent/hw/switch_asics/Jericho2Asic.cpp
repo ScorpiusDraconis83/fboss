@@ -85,6 +85,7 @@ bool Jericho2Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::LINK_ACTIVE_INACTIVE_NOTIFY:
     case HwAsic::Feature::SAI_ECMP_HASH_ALGORITHM:
     case HwAsic::Feature::ACL_BYTE_COUNTER:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_SHARED_WATERMARK:
       return true;
     case HwAsic::Feature::UDF_HASH_FIELD_QUERY:
     case HwAsic::Feature::IN_PAUSE_INCREMENTS_DISCARDS:
@@ -183,6 +184,8 @@ bool Jericho2Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::INGRESS_PRIORITY_GROUP_DROPPED_PACKETS:
     case HwAsic::Feature::NO_RX_REASON_TRAP:
     case HwAsic::Feature::EGRESS_GVOQ_WATERMARK_BYTES:
+    case HwAsic::Feature::MULTIPLE_EGRESS_BUFFER_POOL:
+    case HwAsic::Feature::ENABLE_DELAY_DROP_CONGESTION_THRESHOLD:
       return false;
   }
   return false;

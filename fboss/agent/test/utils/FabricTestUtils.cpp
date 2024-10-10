@@ -61,7 +61,7 @@ void checkFabricConnectivity(TestEnsembleIf* ensemble, SwitchID switchId) {
   });
 }
 
-void populatePortExpectedNeighbors(
+void populatePortExpectedNeighborsToSelf(
     const std::vector<PortID>& ports,
     cfg::SwitchConfig& cfg) {
   const auto& dsfNode = cfg.dsfNodes()->begin()->second;
@@ -78,6 +78,30 @@ void populatePortExpectedNeighbors(
       }
       nbr.remoteSystem() = *dsfNode.name();
       portCfg->expectedNeighborReachability() = {nbr};
+    }
+  }
+}
+
+void populatePortExpectedNeighborsToRemote(
+    const std::vector<PortID>& ports,
+    cfg::SwitchConfig& cfg,
+    const std::vector<int>& remoteSwitchIds,
+    int numParallelLinks) {
+  CHECK_LE(remoteSwitchIds.size() * numParallelLinks, ports.size());
+  auto portIter = ports.begin();
+  for (int remoteSwitchId : remoteSwitchIds) {
+    const auto& dsfNode = cfg.dsfNodes()->at(remoteSwitchId);
+    for (int i = 0; i < numParallelLinks; i++) {
+      CHECK(portIter != ports.end());
+      auto portCfg = findCfgPort(cfg, *portIter);
+      CHECK(portCfg->portType() == cfg::PortType::FABRIC_PORT);
+      cfg::PortNeighbor nbr;
+      if (portCfg->name().has_value()) {
+        nbr.remotePort() = *portCfg->name();
+      }
+      nbr.remoteSystem() = *dsfNode.name();
+      portCfg->expectedNeighborReachability() = {nbr};
+      portIter++;
     }
   }
 }

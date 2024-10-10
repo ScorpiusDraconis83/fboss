@@ -7,8 +7,8 @@
 #include <fboss/fsdb/oper/DeltaValue.h>
 #include <fboss/thrift_cow/storage/Storage.h>
 #include <folly/Expected.h>
-#include <folly/experimental/coro/AsyncGenerator.h>
-#include <folly/experimental/coro/Sleep.h>
+#include <folly/coro/AsyncGenerator.h>
+#include <folly/coro/Sleep.h>
 #include <folly/json/dynamic.h>
 #include <folly/logging/xlog.h>
 #include <chrono>
@@ -141,7 +141,6 @@ class SubscribableStorage {
         subscriber, std::move(paths), protocol);
   }
 
-#ifdef ENABLE_PATCH_APIS
   template <
       typename Path,
       typename = std::enable_if_t<
@@ -182,7 +181,6 @@ class SubscribableStorage {
     return static_cast<Impl*>(this)->subscribe_patch_extended_impl(
         std::move(subscriber), std::move(rawPaths));
   }
-#endif
 
   // wrapper calls to underlying storage
 
@@ -270,26 +268,6 @@ class SubscribableStorage {
       typename Path,
       typename =
           std::enable_if_t<std::is_same_v<typename Path::RootT, RootT>, void>>
-  std::optional<StorageError> add(
-      const Path& path,
-      typename Path::DataT value) {
-    return this->add(path.begin(), path.end(), std::move(value));
-  }
-
-  template <typename T>
-  std::optional<StorageError> add(const ConcretePath& path, T&& value) {
-    return this->add(path.begin(), path.end(), std::forward<T>(value));
-  }
-  template <typename T>
-  std::optional<StorageError> add(PathIter begin, PathIter end, T&& value) {
-    return static_cast<Impl*>(this)->add_impl(
-        begin, end, std::forward<T>(value));
-  }
-
-  template <
-      typename Path,
-      typename =
-          std::enable_if_t<std::is_same_v<typename Path::RootT, RootT>, void>>
   void remove(const Path& path) {
     this->remove(path.begin(), path.end());
   }
@@ -300,11 +278,9 @@ class SubscribableStorage {
     static_cast<Impl*>(this)->remove_impl(begin, end);
   }
 
-#ifdef ENABLE_PATCH_APIS
   std::optional<StorageError> patch(Patch&& patch) {
     return static_cast<Impl*>(this)->patch_impl(std::move(patch));
   }
-#endif
 
   std::optional<StorageError> patch(const fsdb::OperDelta& delta) {
     return static_cast<Impl*>(this)->patch_impl(delta);

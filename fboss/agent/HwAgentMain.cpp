@@ -202,7 +202,7 @@ int hwAgentMain(
   std::vector<std::shared_ptr<apache::thrift::AsyncProcessorFactory>>
       handlers{};
   handlers.push_back(hwAgent->getPlatform()->createHandler());
-  if (true) {
+  if (FLAGS_thrift_test_utils_thrift_handler) {
     // Add HwTestThriftHandler to the thrift server
     auto testUtilsHandler = utility::createHwTestThriftHandler(
         hwAgent->getPlatform()->getHwSwitch());
@@ -225,11 +225,15 @@ int hwAgentMain(
       [&thriftSyncer, &fs, &server]() {
         XLOG(DBG2) << "[Exit] Stopping Thrift Syncer";
         thriftSyncer->stop();
+        XLOG(DBG2) << "[Exit] Stop listening on thrift server";
+        server->stopListening();
         XLOG(DBG2) << "[Exit] Stopping Thrift Server";
         auto stopController = server->getStopController();
         if (auto lockedPtr = stopController.lock()) {
           lockedPtr->stop();
           XLOG(DBG2) << "[Exit] Stopped Thrift Server";
+          clearThriftModules();
+          XLOG(DBG2) << "[Exit] Cleared thrift modules";
         } else {
           LOG(WARNING) << "Unable to stop Thrift Server";
         }

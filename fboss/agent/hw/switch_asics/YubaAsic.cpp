@@ -83,6 +83,10 @@ bool YubaAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::HASH_FIELDS_CUSTOMIZATION:
     case HwAsic::Feature::SAI_ECMP_HASH_ALGORITHM:
     case HwAsic::Feature::SAI_PRBS:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_DROPPED_PACKETS:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_HEADROOM_WATERMARK:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_SHARED_WATERMARK:
+    case HwAsic::Feature::MULTIPLE_EGRESS_BUFFER_POOL:
       return true;
     case HwAsic::Feature::ACL_BYTE_COUNTER:
     case HwAsic::Feature::SAI_MPLS_LABEL_LOOKUP_FAIL_COUNTER:
@@ -145,7 +149,6 @@ bool YubaAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::SAI_MPLS_QOS:
     case HwAsic::Feature::MPLS:
     case HwAsic::Feature::MPLS_ECMP:
-    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_HEADROOM_WATERMARK:
     case HwAsic::Feature::SAI_PORT_ETHER_STATS:
     case HwAsic::Feature::RX_LANE_SQUELCH_ENABLE:
     case HwAsic::Feature::SLOW_STAT_UPDATE:
@@ -180,9 +183,9 @@ bool YubaAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::ACL_ENTRY_ETHER_TYPE:
     case HwAsic::Feature::EGRESS_CORE_BUFFER_WATERMARK:
     case HwAsic::Feature::DELETED_CREDITS_STAT:
-    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_DROPPED_PACKETS:
     case HwAsic::Feature::NO_RX_REASON_TRAP:
     case HwAsic::Feature::EGRESS_GVOQ_WATERMARK_BYTES:
+    case HwAsic::Feature::ENABLE_DELAY_DROP_CONGESTION_THRESHOLD:
       return false;
   }
   return false;

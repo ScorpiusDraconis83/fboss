@@ -16,9 +16,14 @@
 
 namespace facebook::fboss::utility {
 void checkFabricConnectivity(TestEnsembleIf* ensemble, SwitchID switchId);
-void populatePortExpectedNeighbors(
+void populatePortExpectedNeighborsToSelf(
     const std::vector<PortID>& ports,
     cfg::SwitchConfig& cfg);
+void populatePortExpectedNeighborsToRemote(
+    const std::vector<PortID>& ports,
+    cfg::SwitchConfig& cfg,
+    const std::vector<int>& remoteSwitchIds,
+    int numParallelLinks);
 void checkPortFabricReachability(
     TestEnsembleIf* ensemble,
     SwitchID switchId,

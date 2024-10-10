@@ -45,6 +45,9 @@ void addEtherTypeToAcl(
     cfg::AclEntry* acl,
     const cfg::EtherType& etherType = cfg::EtherType::IPv6);
 
+std::vector<cfg::AclTableQualifier> genAclQualifiersConfig(
+    cfg::AsicType asicType);
+
 int getAclTableIndex(
     cfg::SwitchConfig* cfg,
     const std::optional<std::string>& tableName);
@@ -97,6 +100,13 @@ void delAclStat(
     const std::string& matcher,
     const std::string& counterName);
 
+void addAclMatchActions(
+    cfg::SwitchConfig* cfg,
+    const std::string& matcher,
+    const std::optional<std::string>& counterName,
+    const std::optional<std::string>& mirrorName,
+    bool ingress = true);
+
 void renameAclStat(
     cfg::SwitchConfig* cfg,
     const std::string& matcher,
@@ -127,5 +137,10 @@ AclStatGetFunc getAclStatGetFn(SwitchT* sw) {
     return getAclInOutPackets(sw, statName);
   };
 }
+
+std::shared_ptr<AclEntry> getAclEntry(
+    const std::shared_ptr<SwitchState>& state,
+    const std::string& name,
+    bool enableAclTableGroup);
 
 } // namespace facebook::fboss::utility

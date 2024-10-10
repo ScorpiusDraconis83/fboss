@@ -15,11 +15,9 @@ ModbusDevice::ModbusDevice(
     int numCommandRetries)
     : interface_(interface),
       numCommandRetries_(numCommandRetries),
-      baudConfig_(registerMap.baudConfig) {
+      registerMap_(registerMap) {
   info_.deviceAddress = deviceAddress;
-  info_.preferredBaudrate = registerMap.preferredBaudrate;
-  info_.defaultBaudrate = registerMap.defaultBaudrate;
-  info_.baudrate = info_.defaultBaudrate;
+  info_.baudrate = registerMap.baudrate;
   info_.deviceType = registerMap.name;
   info_.parity = registerMap.parity;
 
@@ -138,53 +136,15 @@ void ModbusDevice::readFileRecord(
   command(req, resp, timeout);
 }
 
-bool ModbusDevice::setBaudrateAllowed(uint32_t baud) {
-  std::shared_lock lk(infoMutex_);
-  if (!setBaudEnabled_ || !baudConfig_.isSet || baud == info_.baudrate) {
-    return false;
-  }
-  return true;
-}
-
-void ModbusDevice::setBaudrate(uint32_t baud) {
-  // Return early if earlier setBaud failed, or
-  // we dont have configuration or if we already
-  // are at the requested baudrate.
-  if (!setBaudrateAllowed(baud)) {
-    return;
-  }
-  try {
-    writeSingleRegister(baudConfig_.reg, baudConfig_.baudValueMap.at(baud));
-    std::unique_lock lk(infoMutex_);
-    info_.baudrate = baud;
-  } catch (std::exception&) {
-    std::unique_lock lk(infoMutex_);
-    setBaudEnabled_ = false;
-    logError << "Failed to set baudrate to " << baud << std::endl;
-  }
-}
-
-bool ModbusDevice::reloadRegister(
+void ModbusDevice::forceReloadRegister(
     RegisterStore& registerStore,
-    bool singleShot) {
-  if (!registerStore.isEnabled()) {
-    return false;
-  }
-  const auto& lastReg = registerStore.back();
-  time_t reloadTime = getCurrentTime();
-  if (!singleShot && lastReg &&
-      (time_t)lastReg.timestamp + registerStore.interval() > reloadTime) {
-    return false;
-  }
+    time_t reloadTime) {
   uint16_t registerOffset = registerStore.regAddr();
   try {
-    std::vector<uint16_t>& value = registerStore.beginReloadRegister();
+    std::vector<uint16_t> value(registerStore.length(), 0);
     readHoldingRegisters(registerOffset, value);
-    registerStore.endReloadRegister(reloadTime);
+    registerStore.setRegister(value.begin(), value.end(), reloadTime);
   } catch (ModbusError& e) {
-    logInfo << "DEV:0x" << std::hex << int(info_.deviceAddress) << " ReadReg 0x"
-            << std::hex << registerOffset << ' ' << registerStore.name()
-            << " caught: " << e.what() << std::endl;
     if (e.errorCode == ModbusErrorCode::ILLEGAL_DATA_ADDRESS) {
       logInfo << "DEV:0x" << std::hex << int(info_.deviceAddress)
               << " ReadReg 0x" << std::hex << registerOffset << ' '
@@ -201,11 +161,46 @@ bool ModbusDevice::reloadRegister(
             << std::hex << registerOffset << ' ' << registerStore.name()
             << " caught: " << e.what() << std::endl;
   }
-  return true;
 }
 
-void ModbusDevice::reloadRegisters() {
-  setPreferredBaudrate();
+void ModbusDevice::forceReloadPlan() {
+  reloadPlan_.clear();
+  time_t reloadTime = getCurrentTime();
+  for (auto& reg : info_.registerList) {
+    forceReloadRegister(reg, reloadTime);
+    RegisterStoreSpan::buildRegisterSpanList(reloadPlan_, reg);
+  }
+}
+
+bool ModbusDevice::reloadRegisterSpan(
+    RegisterStoreSpan& span,
+    bool singleShot) {
+  time_t reloadTime = getCurrentTime();
+  if (!singleShot && !span.reloadPending(reloadTime)) {
+    return false;
+  }
+  uint16_t registerOffset = span.getSpanAddress();
+  try {
+    auto& data = span.beginReloadSpan();
+    readHoldingRegisters(registerOffset, data);
+    span.endReloadSpan(reloadTime);
+    return true;
+  } catch (ModbusError& e) {
+    logInfo << "DEV:0x" << std::hex << int(info_.deviceAddress) << " ReadReg 0x"
+            << std::hex << registerOffset << " Len: " << span.length()
+            << " caught: " << e.what() << std::endl;
+    if (e.errorCode == ModbusErrorCode::ILLEGAL_DATA_ADDRESS) {
+      // TODO we might need to reform a plan.
+    }
+  } catch (std::exception& e) {
+    logInfo << "DEV:0x" << std::hex << int(info_.deviceAddress) << " ReadReg 0x"
+            << std::hex << registerOffset << " Len: " << span.length()
+            << " caught: " << e.what() << std::endl;
+  }
+  return false;
+}
+
+void ModbusDevice::reloadAllRegisters() {
   // If the number of consecutive failures has exceeded
   // a threshold, mark the device as dormant.
   for (auto& specialHandler : specialHandlers_) {
@@ -217,12 +212,16 @@ void ModbusDevice::reloadRegisters() {
   }
   bool singleShot = singleShotReload_;
   singleShotReload_ = false;
-  for (auto& registerStore : info_.registerList) {
+  if (singleShot) {
+    forceReloadPlan();
+    return;
+  }
+  for (auto& plan : reloadPlan_) {
     // Break early, if we are entering exclusive mode
     if (exclusiveMode_) {
       break;
     }
-    if (reloadRegister(registerStore, singleShot)) {
+    if (reloadRegisterSpan(plan, singleShot)) {
       // Release thread to allow for higher priority tasks to execute.
       std::this_thread::yield();
     }
@@ -260,8 +259,10 @@ ModbusDeviceValueData ModbusDevice::getValueData(
     const ModbusRegisterFilter& filter,
     bool latestValueOnly) const {
   ModbusDeviceValueData data;
-  std::shared_lock lk(infoMutex_);
-  data.ModbusDeviceInfo::operator=(info_);
+  {
+    std::shared_lock lk(infoMutex_);
+    data.ModbusDeviceInfo::operator=(info_);
+  }
   auto shouldPickRegister = [&filter](const RegisterStore& reg) {
     return !filter || filter.contains(reg.regAddr()) ||
         filter.contains(reg.name());
@@ -277,6 +278,29 @@ ModbusDeviceValueData ModbusDevice::getValueData(
     }
   }
   return data;
+}
+
+void ModbusDevice::forceReloadRegisters(const ModbusRegisterFilter& filter) {
+  auto shouldPickRegister = [&filter](const RegisterStore& reg) {
+    return !filter || filter.contains(reg.regAddr()) ||
+        filter.contains(reg.name());
+  };
+  std::vector<RegisterStoreSpan> regSpans{};
+  for (auto& reg : info_.registerList) {
+    if (shouldPickRegister(reg)) {
+      bool added = RegisterStoreSpan::buildRegisterSpanList(regSpans, reg);
+      if (!added) {
+        logError << "reload:: Not including register: " << reg.name()
+                 << std::endl;
+      }
+    }
+  }
+  for (auto& span : regSpans) {
+    if (!reloadRegisterSpan(span, true)) {
+      logError << "reload:: Reload failed at address: "
+               << +span.getSpanAddress() << std::endl;
+    }
+  }
 }
 
 static std::string commandOutput(const std::string& shell) {

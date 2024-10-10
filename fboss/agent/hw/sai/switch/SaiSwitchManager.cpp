@@ -185,6 +185,7 @@ SaiSwitchManager::SaiSwitchManager(
     std::optional<int64_t> switchId)
     : managerTable_(managerTable), platform_(platform) {
   int64_t swId = switchId.value_or(0);
+  switchPreInitSequence(platform->getAsic()->getAsicType());
   if (bootType == BootType::WARM_BOOT) {
     // Extract switch adapter key and create switch only with the mandatory
     // init attribute (warm boot path)
@@ -993,5 +994,18 @@ void SaiSwitchManager::setLocalCapsuleSwitchIds(
   }
   switch_->setOptionalAttribute(
       SaiSwitchTraits::Attributes::MultiStageLocalSwitchIds{values});
+}
+
+void SaiSwitchManager::setReachabilityGroupList(int reachabilityGroupListSize) {
+#if defined(BRCM_SAI_SDK_DNX_GTE_12_0)
+  if (reachabilityGroupListSize > 0) {
+    std::vector<uint32_t> list;
+    for (int i = 0; i < reachabilityGroupListSize; i++) {
+      list.push_back(i + 1);
+    }
+    switch_->setOptionalAttribute(
+        SaiSwitchTraits::Attributes::ReachabilityGroupList{list});
+  }
+#endif
 }
 } // namespace facebook::fboss

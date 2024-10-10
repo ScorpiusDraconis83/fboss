@@ -9,7 +9,7 @@
 
 #include <folly/Format.h>
 #include <folly/String.h>
-#include <folly/experimental/coro/AsyncGenerator.h>
+#include <folly/coro/AsyncGenerator.h>
 
 #include <folly/logging/xlog.h>
 
@@ -23,6 +23,20 @@ enum class SubscriptionState : uint16_t {
   DISCONNECTED_GR_HOLD_EXPIRED,
   CANCELLED,
   CONNECTED,
+};
+
+enum class SubscriptionType {
+  UNKNOWN = 0,
+  PATH = 1,
+  DELTA = 2,
+  PATCH = 3,
+};
+
+static std::unordered_map<SubscriptionType, std::string> subscriptionTypeToStr =
+    {
+        {SubscriptionType::PATH, "Path"},
+        {SubscriptionType::DELTA, "Delta"},
+        {SubscriptionType::PATCH, "Patch"},
 };
 
 inline bool isConnected(const SubscriptionState& state) {
@@ -69,19 +83,23 @@ struct SubscriptionOptions {
   explicit SubscriptionOptions(
       const std::string& clientId,
       bool subscribeStats = false,
-      uint32_t grHoldTimeSec = 0)
+      uint32_t grHoldTimeSec = 0,
+      // only mark subscription as CONNECTED on initial sync
+      bool requireInitialSyncToMarkConnect = false)
       : clientId_(clientId),
         subscribeStats_(subscribeStats),
-        grHoldTimeSec_(grHoldTimeSec) {}
+        grHoldTimeSec_(grHoldTimeSec),
+        requireInitialSyncToMarkConnect_(requireInitialSyncToMarkConnect) {}
 
   const std::string clientId_;
   bool subscribeStats_{false};
   uint32_t grHoldTimeSec_{0};
+  bool requireInitialSyncToMarkConnect_{false};
 };
 
 struct SubscriptionInfo {
   std::string server;
-  bool isDelta;
+  SubscriptionType subscriptionType;
   bool isStats;
   std::vector<std::string> paths;
   FsdbStreamClient::State state;
@@ -167,10 +185,12 @@ class FsdbSubscriber : public FsdbSubscriberBase {
     cancelStaleStateTimeout();
   }
 
+  static SubscriptionType subscriptionType();
+
   SubscriptionInfo getInfo() const override {
     return SubscriptionInfo{
         getServer(),
-        !std::is_same_v<SubUnit, OperState>,
+        subscriptionType(),
         this->isStats(),
         PathHelpers::toStringList(subscribePaths_),
         getState(),
@@ -230,7 +250,7 @@ class FsdbSubscriber : public FsdbSubscriberBase {
         updateSubscriptionState(SubscriptionState::CANCELLED);
         break;
       default:
-        XLOG(DBG2) << "FsdbScubscriber: no-op transition for ConnectionState: "
+        XLOG(DBG2) << "No-op transition for ConnectionState: "
                    << connectionStateToString(oldState) << " -> "
                    << connectionStateToString(newState);
         break;
@@ -241,6 +261,8 @@ class FsdbSubscriber : public FsdbSubscriberBase {
   }
 
   void scheduleStaleStateTimeout() {
+    XLOG(DBG2) << "Scheduling stale state timeout for "
+               << subscriptionOptions_.grHoldTimeSec_ << " seconds";
     getStreamEventBase()->runInEventBaseThread([this] {
       if (!staleStateTimer_->isScheduled()) {
         staleStateTimer_->scheduleTimeout(
@@ -263,6 +285,10 @@ class FsdbSubscriber : public FsdbSubscriberBase {
 
   const Paths& subscribePaths() const {
     return subscribePaths_;
+  }
+
+  const SubscriptionOptions& subscriptionOptions() const {
+    return subscriptionOptions_;
   }
 
   FsdbSubUnitUpdateCb operSubUnitUpdate_;

@@ -38,6 +38,11 @@ SaiSwitchTraits::Attributes::AttributeRestartIssuWrapper::operator()() {
   return std::nullopt;
 }
 
+std::optional<sai_attr_id_t>
+SaiSwitchTraits::Attributes::AttributeDelayDropCongThreshold::operator()() {
+  return std::nullopt;
+}
+
 std::optional<sai_attr_id_t> SaiSwitchTraits::Attributes::
     AttributeForceTrafficOverFabricWrapper::operator()() {
   return std::nullopt;
@@ -150,6 +155,11 @@ SaiSwitchTraits::Attributes::AttributeVoqLatencyMaxLevel2Ns::operator()() {
 
 std::optional<sai_attr_id_t>
 SaiSwitchTraits::Attributes::AttributeReachabilityGroupList::operator()() {
+  return std::nullopt;
+}
+
+std::optional<sai_attr_id_t> SaiSwitchTraits::Attributes::
+    AttributeFabricLinkLayerFlowControlThreshold::operator()() {
   return std::nullopt;
 }
 } // namespace facebook::fboss

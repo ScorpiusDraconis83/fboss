@@ -10,7 +10,7 @@
 #include "fboss/thrift_cow/gen-cpp2/patch_types.h"
 
 #include <folly/Synchronized.h>
-#include <folly/experimental/coro/AsyncScope.h>
+#include <folly/coro/AsyncScope.h>
 #include <folly/io/async/EventBase.h>
 #include <folly/io/async/ScopedEventBaseThread.h>
 
@@ -109,46 +109,14 @@ class NaivePeriodicSubscribableStorageBase {
       std::vector<ExtendedOperPath> paths,
       OperProtocol protocol);
 
-#ifdef ENABLE_PATCH_APIS
   folly::coro::AsyncGenerator<SubscriberMessage&&> subscribe_patch_impl(
       SubscriberId subscriber,
-      std::map<SubscriptionKey, RawOperPath> rawPaths) {
-    for (auto& [key, path] : rawPaths) {
-      auto convertedPath = convertPath(std::move(*path.path()));
-      path.path() = std::move(convertedPath);
-    }
-    auto root = getPublisherRoot(rawPaths);
-    auto [gen, subscription] = ExtendedPatchSubscription::create(
-        std::move(subscriber),
-        std::move(rawPaths),
-        patchOperProtocol_,
-        std::move(root),
-        heartbeatThread_ ? heartbeatThread_->getEventBase() : nullptr,
-        subscriptionHeartbeatInterval_);
-    subMgr().registerExtendedSubscription(std::move(subscription));
-    return std::move(gen);
-  }
+      std::map<SubscriptionKey, RawOperPath> rawPaths);
 
   folly::coro::AsyncGenerator<SubscriberMessage&&>
   subscribe_patch_extended_impl(
       SubscriberId subscriber,
-      std::map<SubscriptionKey, ExtendedOperPath> paths) {
-    for (auto& [key, path] : paths) {
-      auto convertedPath = convertPath(std::move(*path.path()));
-      path.path() = std::move(convertedPath);
-    }
-    auto root = getPublisherRoot(paths);
-    auto [gen, subscription] = ExtendedPatchSubscription::create(
-        std::move(subscriber),
-        std::move(paths),
-        patchOperProtocol_,
-        std::move(root),
-        heartbeatThread_ ? heartbeatThread_->getEventBase() : nullptr,
-        subscriptionHeartbeatInterval_);
-    subMgr().registerExtendedSubscription(std::move(subscription));
-    return std::move(gen);
-  }
-#endif
+      std::map<SubscriptionKey, ExtendedOperPath> paths);
 
   size_t numSubscriptions() const {
     return subMgr().numSubscriptions();

@@ -49,6 +49,7 @@ target_link_libraries(weutil_lib
   weutil_config_cpp2
   weutil_fboss_eeprom_parser
   platform_config_lib
+  platform_name_lib
   ioctl_smbus_eeprom_reader
 )
 
@@ -58,6 +59,16 @@ add_executable(weutil
 
 target_link_libraries(weutil
   weutil_lib
+)
+
+add_executable(weutil_hw_test
+  fboss/platform/weutil/hw_test/WeutilTest.cpp
+)
+
+target_link_libraries(weutil_hw_test
+  weutil_lib
+  ${GTEST}
+  ${LIBGMOCK_LIBRARIES}
 )
 
 install(TARGETS weutil)

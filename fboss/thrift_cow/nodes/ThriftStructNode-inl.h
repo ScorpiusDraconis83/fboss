@@ -14,8 +14,8 @@
 #include <folly/Conv.h>
 #include <folly/FBString.h>
 #include <folly/json/dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include <thrift/lib/cpp2/protocol/Serializer.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
 #include <thrift/lib/cpp2/reflection/reflection.h>
 #include "fboss/agent/state/NodeBase-defs.h"
 #include "fboss/fsdb/if/gen-cpp2/fsdb_oper_types.h"
@@ -35,6 +35,14 @@ template <typename Member>
 constexpr bool isOptional() {
   return Member::optional::value == apache::thrift::optionality::optional;
 }
+
+struct HasSkipThriftCow {
+  template <typename Traits>
+  using apply = typename std::conditional<
+      Traits::allowSkipThriftCow,
+      std::true_type,
+      std::false_type>::type;
+};
 
 struct IsChildNode {
   template <typename Traits>
@@ -73,7 +81,11 @@ struct MemberConstruct {
   void operator()(fatal::tag<T>, NamedMemberTypes& storage) {
     using name = typename T::name;
     if constexpr (!isOptional<typename T::member>()) {
-      if constexpr (FieldsT::template IsChildNode<name>::value) {
+      if constexpr (FieldsT::template HasSkipThriftCow<name>::value) {
+        using UnderlyingType =
+            typename FieldsT::template TypeFor<name>::element_type;
+        storage.template get<name>() = std::make_shared<UnderlyingType>();
+      } else if constexpr (FieldsT::template IsChildNode<name>::value) {
         using ChildType =
             typename FieldsT::template TypeFor<name>::element_type;
         storage.template get<name>() = std::make_shared<ChildType>();
@@ -103,7 +115,12 @@ struct CopyToMember {
       return;
     }
 
-    if constexpr (FieldsT::template IsChildNode<name>::value) {
+    if constexpr (FieldsT::template HasSkipThriftCow<name>::value) {
+      using UnderlyingType =
+          typename FieldsT::template TypeFor<name>::element_type;
+      storage.template get<name>() =
+          std::make_shared<UnderlyingType>(typename member::getter{}(thrift));
+    } else if constexpr (FieldsT::template IsChildNode<name>::value) {
       using ChildType = typename FieldsT::template TypeFor<name>::element_type;
       storage.template get<name>() =
           std::make_shared<ChildType>(typename member::getter{}(thrift));
@@ -151,6 +168,23 @@ struct ThriftStructFields {
   // Extracting useful common types out of each member via Traits.h
   using MemberTypes = fatal::transform<Members, ExtractStructFields<Derived>>;
 
+  // type list of members with SkipThriftCow enabled
+  using MemberTypesWithSkipThriftCow =
+      fatal::filter<MemberTypes, struct_helpers::HasSkipThriftCow>;
+
+  template <typename Name>
+  using HasSkipThriftCow = typename fatal::
+      contains<MemberTypesWithSkipThriftCow, Name, fatal::get_type::name>;
+
+  template <typename Name>
+  constexpr bool isSkipThriftCowEnabled() const {
+    if constexpr (HasSkipThriftCow<Name>::value) {
+      return true;
+    } else {
+      return false;
+    }
+  }
+
   // This is our ultimate storage type, which is effectively a
   // std::tuple with syntactic sugar for accessing based on
   // these constexpr strings.
@@ -162,19 +196,7 @@ struct ThriftStructFields {
   using TypeFor = typename fatal::find<
       MemberTypes,
       Name,
-      std::enable_if_t<
-          fatal::contains<MemberTypes, Name, fatal::get_type::name>::value,
-          std::false_type>,
-      fatal::get_type::name,
-      fatal::get_type::type>;
-
-  template <typename Name>
-  using ThriftTypeFor = typename fatal::find<
-      Members,
-      Name,
-      std::enable_if_t<
-          fatal::contains<Members, Name, fatal::get_type::name>::value,
-          std::false_type>,
+      std::false_type,
       fatal::get_type::name,
       fatal::get_type::type>;
 
@@ -182,11 +204,12 @@ struct ThriftStructFields {
   using MemberFor = typename fatal::find<
       Members,
       Name,
-      std::enable_if_t<
-          fatal::contains<Members, Name, fatal::get_type::name>::value,
-          std::false_type>,
+      std::false_type,
       fatal::get_type::name,
       fatal::get_identity>;
+
+  template <typename Name>
+  using ThriftTypeFor = typename MemberFor<Name>::type;
 
   template <typename Name>
   using IsChildNode =
@@ -200,10 +223,10 @@ struct ThriftStructFields {
         struct_helpers::MemberConstruct<Self>(), storage_);
   }
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  explicit ThriftStructFields(T&& thrift) {
+  template <typename T>
+  explicit ThriftStructFields(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     fromThrift(std::forward<T>(thrift));
   }
 
@@ -214,10 +237,10 @@ struct ThriftStructFields {
     return thrift;
   }
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  void fromThrift(T&& thrift) {
+  template <typename T>
+  void fromThrift(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     fatal::foreach<MemberTypes>(
         struct_helpers::CopyToMember<Self>(),
         storage_,
@@ -228,15 +251,15 @@ struct ThriftStructFields {
 
   folly::dynamic toDynamic() const {
     folly::dynamic out;
-    apache::thrift::to_dynamic<TC>(
-        out, toThrift(), apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::to_dynamic(
+        out, toThrift(), facebook::thrift::dynamic_format::JSON_1);
     return out;
   }
 
   void fromDynamic(const folly::dynamic& value) {
     TType thrift;
-    apache::thrift::from_dynamic(
-        thrift, value, apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::from_dynamic(
+        thrift, value, facebook::thrift::dynamic_format::JSON_1);
     fromThrift(thrift);
   }
 
@@ -284,7 +307,10 @@ struct ThriftStructFields {
         std::is_convertible_v<std::decay_t<TTypeFor>, ThriftTypeFor<Name>>,
         "Unexpected thrift type for set()");
 
-    if constexpr (IsChildNode<Name>::value) {
+    if constexpr (HasSkipThriftCow<Name>::value) {
+      using MemberType = typename TypeFor<Name>::element_type;
+      ref<Name>() = std::make_shared<MemberType>(std::forward<TTypeFor>(value));
+    } else if constexpr (IsChildNode<Name>::value) {
       using MemberType = typename TypeFor<Name>::element_type;
       ref<Name>() = std::make_shared<MemberType>(std::forward<TTypeFor>(value));
     } else {
@@ -327,7 +353,11 @@ struct ThriftStructFields {
 
   template <typename Name, typename... Args>
   TypeFor<Name>& constructMember(Args&&... args) {
-    if constexpr (IsChildNode<Name>::value) {
+    if constexpr (HasSkipThriftCow<Name>::value) {
+      using UnderlyingType = typename TypeFor<Name>::element_type;
+      return ref<Name>() =
+                 std::make_shared<UnderlyingType>(std::forward<Args>(args)...);
+    } else if constexpr (IsChildNode<Name>::value) {
       using ChildType = typename TypeFor<Name>::element_type;
       return ref<Name>() =
                  std::make_shared<ChildType>(std::forward<Args>(args)...);
@@ -405,6 +435,11 @@ class ThriftStructNode
   using BaseT::BaseT;
 
   ThriftStructNode() : BaseT(ThriftType{}) {}
+
+  template <typename Name>
+  constexpr bool isSkipThriftCowEnabled() const {
+    return this->getFields()->template isSkipThriftCowEnabled<Name>();
+  }
 
   TType toThrift() const {
     return this->getFields()->toThrift();
@@ -495,7 +530,7 @@ class ThriftStructNode
   }
 
   template <typename Name>
-  auto& modify() {
+  auto& modify(bool construct = true) {
     DCHECK(!this->isPublished());
 
     auto& child = this->template ref<Name>();
@@ -506,7 +541,7 @@ class ThriftStructNode
           child.swap(clonedChild);
         }
       }
-    } else {
+    } else if (construct) {
       this->template constructMember<Name>();
     }
     return this->template ref<Name>();
@@ -520,10 +555,10 @@ class ThriftStructNode
     return child;
   }
 
-  virtual void modify(const std::string& token) {
+  virtual void modify(const std::string& token, bool construct = true) {
     visitMember<typename Fields::Members>(token, [&](auto tag) {
       using name = typename decltype(fatal::tag_type(tag))::name;
-      this->modify<name>();
+      this->modify<name>(construct);
     });
   }
 
@@ -578,7 +613,7 @@ class ThriftStructNode
       if (begin == end) {
         node.remove(tok);
       } else {
-        node.modify(tok);
+        node.modify(tok, false);
       }
     });
 

@@ -26,6 +26,7 @@ cpp_library(
         "//fboss/fsdb/if:fsdb_model",
         "//fboss/fsdb/if:fsdb_oper-cpp2-types",
         "//fboss/platform/config_lib:config_lib",
+        "//fboss/platform/helpers:platform_name_lib",
         "//fboss/platform/sensor_service/if:sensor_config-cpp2-types",
         "//fboss/platform/sensor_service/if:sensor_service-cpp2-types",
         "//folly:file_util",
@@ -89,6 +90,21 @@ cpp_library(
         "//infrasec/authorization:base_identity_util",
         "//security/ca/lib:cert_path_picker",
         "//thrift/lib/cpp2/async:rocket_client_channel",
+    ],
+)
+
+cpp_library(
+    name = "config_validator",
+    srcs = [
+        "ConfigValidator.cpp",
+    ],
+    exported_deps = [
+        "fbsource//third-party/fmt:fmt",
+        "//fboss/platform/sensor_service/if:sensor_config-cpp2-types",
+        "//folly/logging:logging",
+    ],
+    exported_external_deps = [
+        "re2",
     ],
 )
 

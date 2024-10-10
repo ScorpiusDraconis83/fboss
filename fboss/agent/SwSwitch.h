@@ -16,8 +16,10 @@
 #include "fboss/agent/MultiSwitchFb303Stats.h"
 #include "fboss/agent/PacketObserver.h"
 #include "fboss/agent/RestartTimeTracker.h"
+#include "fboss/agent/SwRxPacket.h"
 #include "fboss/agent/SwSwitchRouteUpdateWrapper.h"
 #include "fboss/agent/SwitchInfoTable.h"
+#include "fboss/agent/SwitchStats.h"
 #include "fboss/agent/Utils.h"
 #include "fboss/agent/gen-cpp2/agent_stats_types.h"
 #include "fboss/agent/gen-cpp2/switch_config_types.h"
@@ -39,12 +41,18 @@
 #include <folly/concurrency/ConcurrentHashMap.h>
 #include <optional>
 
+#if FOLLY_HAS_COROUTINES
+#include <folly/coro/BoundedQueue.h>
+#endif
+
 #include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
 #include <thread>
 #include <type_traits>
+
+DECLARE_bool(rx_sw_priority);
 
 namespace facebook::fboss {
 
@@ -98,6 +106,10 @@ class SwSwitchWarmBootHelper;
 class AgentDirectoryUtil;
 class HwSwitchThriftClientTable;
 class ResourceAccountant;
+
+inline static const int kHiPriorityBufferSize{1000};
+inline static const int kMidPriorityBufferSize{1000};
+inline static const int kLowPriorityBufferSize{1000};
 
 namespace fsdb {
 enum class FsdbSubscriptionState;
@@ -966,6 +978,7 @@ class SwSwitch : public HwSwitchCallback {
   getSwitchReachability() const {
     return *hwSwitchReachability_.rlock();
   }
+  void rxPacketReceived(std::unique_ptr<SwRxPacket> pkt);
 
  private:
   std::optional<folly::MacAddress> getSourceMac(
@@ -1085,10 +1098,55 @@ class SwSwitch : public HwSwitchCallback {
 
   void stopHwSwitchHandler();
 
+  void packetRxThread();
+
   // TODO: To be removed once switchWatermarkStats is available in prod
   HwBufferPoolStats getBufferPoolStatsFromSwitchWatermarkStats();
 
   void updateAddrToLocalIntf(const StateDelta& delta);
+
+#if FOLLY_HAS_COROUTINES
+  using BoundedRxPktQueue = folly::coro::BoundedQueue<
+      std::unique_ptr<SwRxPacket>,
+      false /*SingleProducer*/,
+      true /* SingleConsumer*/>;
+  class RxPacketHandlerQueues {
+   public:
+    folly::coro::Task<void> enqueue(
+        std::unique_ptr<SwRxPacket> pkt,
+        SwitchStats* stats) {
+      auto cosQueue = pkt->cosQueue();
+      if (!cosQueue || CpuCosQueueId(*cosQueue) == CpuCosQueueId::HIPRI) {
+        co_await hiPriQueue_.enqueue(std::move(pkt));
+        stats->hiPriPktsReceived();
+      } else if (CpuCosQueueId(*cosQueue) == CpuCosQueueId::MIDPRI) {
+        midPriQueue_.try_enqueue(std::move(pkt)) ? stats->midPriPktsReceived()
+                                                 : stats->midPriPktsDropped();
+      } else {
+        loPriQueue_.try_enqueue(std::move(pkt)) ? stats->loPriPktsReceived()
+                                                : stats->loPriPktsDropped();
+      }
+      co_return;
+    }
+    bool hasPacketsToProcess() {
+      return hiPriQueue_.size() || midPriQueue_.size() || loPriQueue_.size();
+    }
+    BoundedRxPktQueue& getHiPriRxPktQueue() {
+      return hiPriQueue_;
+    }
+    BoundedRxPktQueue& getMidPriRxPktQueue() {
+      return midPriQueue_;
+    }
+    BoundedRxPktQueue& getLoPriRxPktQueue() {
+      return loPriQueue_;
+    }
+
+   private:
+    BoundedRxPktQueue hiPriQueue_{kHiPriorityBufferSize};
+    BoundedRxPktQueue midPriQueue_{kMidPriorityBufferSize};
+    BoundedRxPktQueue loPriQueue_{kLowPriorityBufferSize};
+  };
+#endif
 
   std::optional<cfg::SdkVersion> sdkVersion_;
   std::unique_ptr<MultiHwSwitchHandler> multiHwSwitchHandler_;
@@ -1131,7 +1189,7 @@ class SwSwitch : public HwSwitchCallback {
    * A thread for performing various background tasks.
    */
   std::unique_ptr<std::thread> backgroundThread_;
-  FbossEventBase backgroundEventBase_;
+  FbossEventBase backgroundEventBase_{"SwSwitchBackgroundEventBase"};
   std::shared_ptr<ThreadHeartbeat> bgThreadHeartbeat_;
 
   /*
@@ -1140,35 +1198,43 @@ class SwSwitch : public HwSwitchCallback {
    * ASIC front panel ports
    */
   std::unique_ptr<std::thread> packetTxThread_;
-  FbossEventBase packetTxEventBase_;
+  FbossEventBase packetTxEventBase_{"SwSwitchPacketTxEventBase"};
   std::shared_ptr<ThreadHeartbeat> packetTxThreadHeartbeat_;
 
   /*
    * A thread for sending packets to the distribution process
    */
   std::shared_ptr<std::thread> pcapDistributionThread_;
-  FbossEventBase pcapDistributionEventBase_;
+  FbossEventBase pcapDistributionEventBase_{
+      "SwSwitchPcapDistributionEventBase"};
 
   /*
    * A thread for processing SwitchState updates.
    */
   std::unique_ptr<std::thread> updateThread_;
-  FbossEventBase updateEventBase_;
+  FbossEventBase updateEventBase_{"SwSwitchUpdateEventBase"};
   std::shared_ptr<ThreadHeartbeat> updThreadHeartbeat_;
 
   /*
    * A thread dedicated to LACP processing.
    */
   std::unique_ptr<std::thread> lacpThread_;
-  FbossEventBase lacpEventBase_;
+  FbossEventBase lacpEventBase_{"SwSwitchLacpEventBase"};
   std::shared_ptr<ThreadHeartbeat> lacpThreadHeartbeat_;
 
   /*
    * A thread dedicated to Arp and Ndp cache entry processing.
    */
   std::unique_ptr<std::thread> neighborCacheThread_;
-  FbossEventBase neighborCacheEventBase_;
+  FbossEventBase neighborCacheEventBase_{"SwSwitchNeighborCacheEventBase"};
   std::shared_ptr<ThreadHeartbeat> neighborCacheThreadHeartbeat_;
+
+  /*
+   * A thread for processing rx packets from thrift stream
+   */
+  std::unique_ptr<std::thread> packetRxThread_;
+  folly::EventBase packetRxEventBase_;
+  std::shared_ptr<ThreadHeartbeat> packetRxThreadHeartbeat_;
 
   /*
    * A thread dedicated to monitor above thread heartbeats
@@ -1227,6 +1293,8 @@ class SwSwitch : public HwSwitchCallback {
   folly::Synchronized<std::unique_ptr<FsdbSyncer>> fsdbSyncer_;
   std::unique_ptr<TeFlowNexthopHandler> teFlowNextHopHandler_;
   std::unique_ptr<DsfSubscriber> dsfSubscriber_;
+  std::shared_ptr<ThreadHeartbeat> dsfSubscriberReconnectThreadHeartbeat_;
+  std::shared_ptr<ThreadHeartbeat> dsfSubscriberStreamThreadHeartbeat_;
   SwitchInfoTable switchInfoTable_;
   std::unique_ptr<PlatformMapping> platformMapping_;
   std::unique_ptr<HwAsicTable> hwAsicTable_;
@@ -1253,5 +1321,11 @@ class SwSwitch : public HwSwitchCallback {
   folly::Synchronized<
       std::map<SwitchID, switch_reachability::SwitchReachability>>
       hwSwitchReachability_;
+#if FOLLY_HAS_COROUTINES
+  RxPacketHandlerQueues rxPacketHandlerQueues_;
+#endif
+  std::atomic<bool> packetRxRunning_{false};
+  std::condition_variable rxPktThreadCV_;
+  std::mutex rxPktMutex_;
 };
 } // namespace facebook::fboss

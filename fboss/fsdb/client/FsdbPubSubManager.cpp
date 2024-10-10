@@ -13,10 +13,8 @@
 
 namespace {
 using namespace facebook::fboss::fsdb;
-auto constexpr kDelta = "delta";
 auto constexpr kState = "state";
 auto constexpr kStats = "stats";
-auto constexpr kPath = "path";
 auto constexpr kReconnectThread = "FsdbReconnectThread";
 auto constexpr kSubscriberThread = "FsdbSubscriberThread";
 auto constexpr kStatsPublisherThread = "FsdbStatsPublisherThread";
@@ -25,12 +23,12 @@ auto constexpr kStatePublisherThread = "FsdbStatePublisherThread";
 std::string toSubscriptionStr(
     const std::string& fsdbHost,
     const std::vector<std::string>& path,
-    bool isDelta,
+    SubscriptionType subscriptionType,
     bool subscribeStats) {
   return folly::to<std::string>(
       fsdbHost,
       ":/",
-      (isDelta ? kDelta : kPath),
+      subscriptionTypeToStr[subscriptionType],
       ":/",
       (subscribeStats ? kStats : kState),
       ":/",
@@ -40,16 +38,31 @@ std::string toSubscriptionStr(
 std::string toSubscriptionStr(
     const std::string& fsdbHost,
     const std::vector<ExtendedOperPath>& paths,
-    bool isDelta,
+    SubscriptionType subscriptionType,
     bool subscribeStats) {
   return folly::to<std::string>(
       fsdbHost,
       ":/",
-      (isDelta ? kDelta : kPath),
+      subscriptionTypeToStr[subscriptionType],
       ":/",
       (subscribeStats ? kStats : kState),
       ":/",
       PathHelpers::toString(paths));
+}
+
+std::string toSubscriptionStr(
+    const std::string& fsdbHost,
+    const std::map<SubscriptionKey, RawOperPath>& path,
+    SubscriptionType subscribeType,
+    bool subscribeStats) {
+  return folly::to<std::string>(
+      fsdbHost,
+      ":/",
+      subscriptionTypeToStr[subscribeType],
+      ":/",
+      (subscribeStats ? kStats : kState),
+      ":/",
+      PathHelpers::toString(path));
 }
 } // namespace
 namespace facebook::fboss::fsdb {
@@ -121,7 +134,7 @@ std::unique_ptr<PublisherT> FsdbPubSubManager::createPublisherImpl(
     int32_t fsdbPort) const {
   auto publisherExists = publishStats
       ? (statDeltaPublisher_ || statPathPublisher_)
-      : (stateDeltaPublisher_ || statePathPublisher_);
+      : (stateDeltaPublisher_ || statePathPublisher_ || statePatchPublisher_);
 
   if (publisherExists) {
     throw std::runtime_error(
@@ -363,6 +376,19 @@ void FsdbPubSubManager::addStateDeltaSubscription(
       std::move(serverOptions));
 }
 
+void FsdbPubSubManager::addStatePatchSubscription(
+    const PatchPath& subscribePath,
+    SubscriptionStateChangeCb stateChangeCb,
+    FsdbPatchSubscriber::FsdbOperPatchUpdateCb patchCb,
+    FsdbStreamClient::ServerOptions&& serverOptions) {
+  addSubscriptionImpl<FsdbPatchSubscriber>(
+      subscribePath,
+      stateChangeCb,
+      patchCb,
+      false /*subscribeStat*/,
+      std::move(serverOptions));
+}
+
 void FsdbPubSubManager::addStatePathSubscription(
     const Path& subscribePath,
     SubscriptionStateChangeCb stateChangeCb,
@@ -473,19 +499,60 @@ void FsdbPubSubManager::addStatExtDeltaSubscription(
 
 template <typename SubscriberT, typename PathElement>
 void FsdbPubSubManager::addSubscriptionImpl(
+    const std::map<SubscriptionKey, PathElement>& subscribePath,
+    SubscriptionStateChangeCb stateChangeCb,
+    typename SubscriberT::FsdbSubUnitUpdateCb subUnitAvailableCb,
+    bool subscribeStats,
+    FsdbStreamClient::ServerOptions&& serverOptions,
+    const std::optional<std::string>& clientIdSuffix) {
+  auto subscribeType = SubscriberT::subscriptionType();
+  XCHECK(subscribeType != SubscriptionType::UNKNOWN) << "Unknown data type";
+  auto subsStr = toSubscriptionStr(
+      serverOptions.dstAddr.getAddressStr(),
+      subscribePath,
+      subscribeType,
+      subscribeStats);
+  auto& path2Subscriber =
+      subscribeStats ? statPath2Subscriber_ : statePath2Subscriber_;
+  auto path2SubscriberW = path2Subscriber.wlock();
+
+  auto clientStr = folly::to<std::string>(clientId_);
+  if (clientIdSuffix.has_value()) {
+    clientStr.append(folly::to<std::string>("_", clientIdSuffix.value()));
+  }
+
+  auto [itr, inserted] = path2SubscriberW->emplace(std::make_pair(
+      subsStr,
+      std::make_unique<SubscriberT>(
+          clientStr,
+          subscribePath,
+          subscriberEvb_,
+          reconnectEvb_,
+          subUnitAvailableCb,
+          subscribeStats,
+          stateChangeCb)));
+  if (!inserted) {
+    throw std::runtime_error(
+        "Subscription at : " + subsStr + " already exists");
+  }
+  XLOG(DBG2) << "Added subscription for: " << subsStr;
+  itr->second->setServerOptions(std::move(serverOptions));
+}
+
+template <typename SubscriberT, typename PathElement>
+void FsdbPubSubManager::addSubscriptionImpl(
     const std::vector<PathElement>& subscribePath,
     SubscriptionStateChangeCb stateChangeCb,
     typename SubscriberT::FsdbSubUnitUpdateCb subUnitAvailableCb,
     bool subscribeStats,
     FsdbStreamClient::ServerOptions&& serverOptions,
     const std::optional<std::string>& clientIdSuffix) {
-  auto isDelta = std::disjunction_v<
-      std::is_same<SubscriberT, FsdbDeltaSubscriber>,
-      std::is_same<SubscriberT, FsdbExtDeltaSubscriber>>;
+  auto subscriptionType = SubscriberT::subscriptionType();
+  XCHECK(subscriptionType != SubscriptionType::UNKNOWN) << "Unknown data type";
   auto subsStr = toSubscriptionStr(
       serverOptions.dstAddr.getAddressStr(),
       subscribePath,
-      isDelta,
+      subscriptionType,
       subscribeStats);
   auto& path2Subscriber =
       subscribeStats ? statPath2Subscriber_ : statePath2Subscriber_;
@@ -521,13 +588,12 @@ void FsdbPubSubManager::addSubscriptionImpl(
     SubscriptionStateChangeCb stateChangeCb,
     typename SubscriberT::FsdbSubUnitUpdateCb subUnitAvailableCb,
     FsdbStreamClient::ServerOptions&& serverOptions) {
-  auto isDelta = std::disjunction_v<
-      std::is_same<SubscriberT, FsdbDeltaSubscriber>,
-      std::is_same<SubscriberT, FsdbExtDeltaSubscriber>>;
+  auto subscriptionType = SubscriberT::subscriptionType();
+  XCHECK(subscriptionType != SubscriptionType::UNKNOWN) << "Unknown data type";
   auto subsStr = toSubscriptionStr(
       serverOptions.dstAddr.getAddressStr(),
       subscribePath,
-      isDelta,
+      subscriptionType,
       subscriptionOptions.subscribeStats_);
   auto& path2Subscriber = subscriptionOptions.subscribeStats_
       ? statPath2Subscriber_
@@ -574,25 +640,43 @@ void FsdbPubSubManager::removeStateDeltaSubscription(
     const Path& subscribePath,
     const std::string& fsdbHost) {
   removeSubscriptionImpl(
-      subscribePath, fsdbHost, true /*delta*/, false /*subscribeStats*/);
+      subscribePath,
+      fsdbHost,
+      SubscriptionType::DELTA,
+      false /*subscribeStats*/);
+}
+void FsdbPubSubManager::removeStatePatchSubscription(
+    const Path& subscribePath,
+    const std::string& fsdbHost) {
+  removeSubscriptionImpl(
+      subscribePath,
+      fsdbHost,
+      SubscriptionType::PATCH,
+      false /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatePathSubscription(
     const Path& subscribePath,
     const std::string& fsdbHost) {
   removeSubscriptionImpl(
-      subscribePath, fsdbHost, false /*delta*/, false /*subscribeStats*/);
+      subscribePath,
+      fsdbHost,
+      SubscriptionType::PATH,
+      false /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatDeltaSubscription(
     const Path& subscribePath,
     const std::string& fsdbHost) {
   removeSubscriptionImpl(
-      subscribePath, fsdbHost, true /*delta*/, true /*subscribeStats*/);
+      subscribePath,
+      fsdbHost,
+      SubscriptionType::DELTA,
+      true /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatPathSubscription(
     const Path& subscribePath,
     const std::string& fsdbHost) {
   removeSubscriptionImpl(
-      subscribePath, fsdbHost, false /*delta*/, true /*subscribeStats*/);
+      subscribePath, fsdbHost, SubscriptionType::PATH, true /*subscribeStats*/);
 }
 
 void FsdbPubSubManager::removeStateDeltaSubscription(
@@ -601,7 +685,7 @@ void FsdbPubSubManager::removeStateDeltaSubscription(
   removeSubscriptionImpl(
       PathHelpers::toExtendedOperPath(subscribePath),
       fsdbHost,
-      true /*delta*/,
+      SubscriptionType::DELTA,
       false /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatePathSubscription(
@@ -610,7 +694,7 @@ void FsdbPubSubManager::removeStatePathSubscription(
   removeSubscriptionImpl(
       PathHelpers::toExtendedOperPath(subscribePath),
       fsdbHost,
-      false /*delta*/,
+      SubscriptionType::PATH,
       false /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatDeltaSubscription(
@@ -619,7 +703,7 @@ void FsdbPubSubManager::removeStatDeltaSubscription(
   removeSubscriptionImpl(
       PathHelpers::toExtendedOperPath(subscribePath),
       fsdbHost,
-      true /*delta*/,
+      SubscriptionType::DELTA,
       true /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatPathSubscription(
@@ -628,20 +712,26 @@ void FsdbPubSubManager::removeStatPathSubscription(
   removeSubscriptionImpl(
       PathHelpers::toExtendedOperPath(subscribePath),
       fsdbHost,
-      false /*delta*/,
+      SubscriptionType::PATH,
       true /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStateExtDeltaSubscription(
     const std::vector<ExtendedOperPath>& subscribePaths,
     const std::string& fsdbHost) {
   removeSubscriptionImpl(
-      subscribePaths, fsdbHost, true /*delta*/, false /*subscribeStats*/);
+      subscribePaths,
+      fsdbHost,
+      SubscriptionType::DELTA,
+      false /*subscribeStats*/);
 }
 void FsdbPubSubManager::removeStatExtDeltaSubscription(
     const std::vector<ExtendedOperPath>& subscribePaths,
     const std::string& fsdbHost) {
   removeSubscriptionImpl(
-      subscribePaths, fsdbHost, true /*delta*/, true /*subscribeStats*/);
+      subscribePaths,
+      fsdbHost,
+      SubscriptionType::DELTA,
+      true /*subscribeStats*/);
 }
 
 void FsdbPubSubManager::clearStateSubscriptions() {
@@ -655,10 +745,10 @@ template <typename PathElement>
 void FsdbPubSubManager::removeSubscriptionImpl(
     const std::vector<PathElement>& subscribePath,
     const std::string& fsdbHost,
-    bool isDelta,
+    SubscriptionType subscriptionType,
     bool subscribeStats) {
-  auto subsStr =
-      toSubscriptionStr(fsdbHost, subscribePath, isDelta, subscribeStats);
+  auto subsStr = toSubscriptionStr(
+      fsdbHost, subscribePath, subscriptionType, subscribeStats);
   auto& path2Subscriber =
       subscribeStats ? statPath2Subscriber_ : statePath2Subscriber_;
   if (path2Subscriber.wlock()->erase(subsStr)) {
@@ -670,7 +760,10 @@ FsdbStreamClient::State FsdbPubSubManager::getStatePathSubsriptionState(
     const MultiPath& subscribePath,
     const std::string& fsdbHost) const {
   auto subsStr = toSubscriptionStr(
-      fsdbHost, PathHelpers::toExtendedOperPath(subscribePath), false, false);
+      fsdbHost,
+      PathHelpers::toExtendedOperPath(subscribePath),
+      SubscriptionType::PATH,
+      false);
   auto path2SubscriberR = statePath2Subscriber_.rlock();
   if (path2SubscriberR->find(subsStr) == path2SubscriberR->end()) {
     return FsdbStreamClient::State::CANCELLED;

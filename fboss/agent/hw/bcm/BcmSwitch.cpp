@@ -1732,8 +1732,8 @@ void BcmSwitch::processEnabledPorts(const StateDelta& delta) {
 }
 
 bool BcmSwitch::processChangedIngressPoolCfg(
-    std::optional<state::BufferPoolFields> oldBufferPoolCfg,
-    std::optional<state::BufferPoolFields> newBufferPoolCfg) {
+    std::optional<BufferPoolFields> oldBufferPoolCfg,
+    std::optional<BufferPoolFields> newBufferPoolCfg) {
   // bufferPool <-> noBufferPool
   if ((oldBufferPoolCfg && !newBufferPoolCfg) ||
       (!oldBufferPoolCfg && newBufferPoolCfg)) {
@@ -4243,6 +4243,10 @@ AclStats BcmSwitch::getAclStats() const {
 
 std::shared_ptr<SwitchState> BcmSwitch::reconstructSwitchState() const {
   throw FbossError("reconstructSwitchState not implemented for BCM");
+}
+
+HwResourceStats BcmSwitch::getResourceStats() const {
+  return bcmStatUpdater_->getHwTableStats();
 }
 
 } // namespace facebook::fboss

@@ -117,6 +117,8 @@ class SaiSwitch : public HwSwitch {
   HwSwitchDropStats getSwitchDropStats() const override;
   HwSwitchWatermarkStats getSwitchWatermarkStats() const override;
 
+  HwResourceStats getResourceStats() const override;
+
   uint64_t getDeviceWatermarkBytes() const override;
 
   void fetchL2Table(std::vector<L2EntryThrift>* l2Table) const override;
@@ -235,6 +237,8 @@ class SaiSwitch : public HwSwitch {
   AclStats getAclStats() const override;
 
   std::shared_ptr<SwitchState> reconstructSwitchState() const override;
+
+  void injectSwitchReachabilityChangeNotification() override;
 
  private:
   void gracefulExitImpl() override;
@@ -585,15 +589,18 @@ class SaiSwitch : public HwSwitch {
   SwitchSaiId saiSwitchId_;
 
   std::unique_ptr<std::thread> linkStateBottomHalfThread_;
-  FbossEventBase linkStateBottomHalfEventBase_;
+  FbossEventBase linkStateBottomHalfEventBase_{"LinkStateBottomHalfEventBase"};
   std::unique_ptr<std::thread> fdbEventBottomHalfThread_;
-  FbossEventBase fdbEventBottomHalfEventBase_;
+  FbossEventBase fdbEventBottomHalfEventBase_{"FdbEventBottomHalfEventBase"};
   std::unique_ptr<std::thread> txReadyStatusChangeBottomHalfThread_;
-  FbossEventBase txReadyStatusChangeBottomHalfEventBase_;
+  FbossEventBase txReadyStatusChangeBottomHalfEventBase_{
+      "TxReadyStatusChangeBottomHalfEventBase"};
   std::unique_ptr<std::thread> linkConnectivityChangeBottomHalfThread_;
-  FbossEventBase linkConnectivityChangeBottomHalfEventBase_;
+  FbossEventBase linkConnectivityChangeBottomHalfEventBase_{
+      "LinkConnectivityChangeBottomHalfEventBase"};
   std::unique_ptr<std::thread> switchReachabilityChangeBottomHalfThread_;
-  FbossEventBase switchReachabilityChangeBottomHalfEventBase_;
+  FbossEventBase switchReachabilityChangeBottomHalfEventBase_{
+      "SwitchReachabilityChangeBottomHalfEventBase"};
 
   HwResourceStats hwResourceStats_;
   std::atomic<SwitchRunState> runState_{SwitchRunState::UNINITIALIZED};
@@ -606,7 +613,7 @@ class SaiSwitch : public HwSwitch {
   std::map<PortID, phy::PhyInfo> lastPhyInfos_;
   std::unique_ptr<FabricConnectivityManager> fabricConnectivityManager_;
   bool pfcDeadlockEnabled_{false};
-  folly::Synchronized<bool> switchReachabilityChangePending_{false};
+  folly::Synchronized<int> switchReachabilityChangePending_{0};
 };
 
 } // namespace facebook::fboss

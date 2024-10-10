@@ -153,13 +153,22 @@ void SwAgentSignalHandler::signalReceived(int /*signum*/) noexcept {
 }
 
 void SwAgentInitializer::stopServer() {
+  // Server init happens asynchronously, so if AgentEnsemble somehow exited
+  // before server_ is set (e.g. due to an error), the code below will crash.
+  if (!serverStarted_) {
+    return;
+  }
   // stop Thrift server: stop all worker threads and
   // stop accepting new connections
+  XLOG(DBG2) << "Stop listening on thrift server";
+  server_->stopListening();
   XLOG(DBG2) << "Stopping thrift server";
   auto stopController = server_->getStopController();
   if (auto lockedPtr = stopController.lock()) {
     lockedPtr->stop();
     XLOG(DBG2) << "Stopped thrift server";
+    clearThriftModules();
+    XLOG(DBG2) << "Cleared thrift modules";
   } else {
     LOG(WARNING) << "Unable to stop Thrift Server";
   }
@@ -167,7 +176,11 @@ void SwAgentInitializer::stopServer() {
 
 void SwAgentInitializer::stopServices() {
   stopServer();
-  initializer_->stopFunctionScheduler();
+  // initializer_ could end up being null if createSwitch() wasn't complete,
+  // for example if an error was encountered.
+  if (initializer_) {
+    initializer_->stopFunctionScheduler();
+  }
   XLOG(DBG2) << "Stopped stats FunctionScheduler";
   fbossFinalize();
 }
@@ -216,7 +229,7 @@ int SwAgentInitializer::initAgent(
   swHandler->setIdleTimeout(FLAGS_thrift_idle_timeout);
   auto handlers = getThrifthandlers();
   handlers.push_back(swHandler);
-  eventBase_ = new FbossEventBase();
+  eventBase_ = new FbossEventBase("SwAgentInitializerInitAgentEventBase");
   std::vector<int> ports = {FLAGS_port, FLAGS_migrated_port};
   // serve on hw agent port in mono so that clients can access
   // hw agent apis on mono as well

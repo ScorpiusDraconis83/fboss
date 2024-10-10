@@ -38,6 +38,9 @@ bool Ramon3Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::RX_LANE_SQUELCH_ENABLE:
     case HwAsic::Feature::SAI_PORT_SERDES_PROGRAMMING:
       return getAsicMode() != AsicMode::ASIC_MODE_SIM;
+    // Dual stage L1 (FE13) fabric features
+    case HwAsic::Feature::CABLE_PROPOGATION_DELAY:
+      return fabricNodeRole_ == FabricNodeRole::DUAL_STAGE_L1;
     default:
       return false;
   }
@@ -118,7 +121,7 @@ uint32_t Ramon3Asic::getMaxEcmpSize() const {
 }
 
 uint32_t Ramon3Asic::getNumCores() const {
-  throw FbossError("Num cores API not supported by Ramon3Asic");
+  return 2;
 }
 
 bool Ramon3Asic::scalingFactorBasedDynamicThresholdSupported() const {

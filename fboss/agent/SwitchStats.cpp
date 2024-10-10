@@ -157,6 +157,24 @@ SwitchStats::SwitchStats(ThreadLocalStatsMap* map, int numSwitches)
           AVG,
           50,
           100),
+      dsfSubReconnectThreadHeartbeatDelay_(
+          map,
+          kCounterPrefix + "dsf_subscriber_reconnect_thread_heartbeat_delay.ms",
+          100,
+          0,
+          20000,
+          AVG,
+          50,
+          100),
+      dsfSubStreamThreadHeartbeatDelay_(
+          map,
+          kCounterPrefix + "dsf_subscriber_stream_thread_heartbeat_delay.ms",
+          100,
+          0,
+          20000,
+          AVG,
+          50,
+          100),
       bgEventBacklog_(
           map,
           kCounterPrefix + "bg_event_backlog",
@@ -202,6 +220,24 @@ SwitchStats::SwitchStats(ThreadLocalStatsMap* map, int numSwitches)
           AVG,
           50,
           100),
+      dsfSubReconnectThreadEventBacklog_(
+          map,
+          kCounterPrefix + "dsf_subscriber_reconnect_thread_event_backlog",
+          1,
+          0,
+          200,
+          AVG,
+          50,
+          100),
+      dsfSubStreamThreadEventBacklog_(
+          map,
+          kCounterPrefix + "dsf_subscriber_stream_thread_event_backlog",
+          1,
+          0,
+          200,
+          AVG,
+          50,
+          100),
       maxNumOfPhysicalHostsPerQueue_(
           map,
           kCounterPrefix + "max_num_of_physical_hosts_per_queue",
@@ -214,6 +250,11 @@ SwitchStats::SwitchStats(ThreadLocalStatsMap* map, int numSwitches)
           map,
           kCounterPrefix + "link_active_state.flap",
           SUM),
+      switchReachabilityChangeProcessed_(
+          map,
+          kCounterPrefix + "switch_reachability_change_processed",
+          SUM),
+
       pcapDistFailure_(map, kCounterPrefix + "pcap_dist_failure.error"),
       trapPktTooBig_(map, kCounterPrefix + "trapped.packet_too_big", SUM, RATE),
       LldpRecvdPkt_(map, kCounterPrefix + "lldp.recvd", SUM, RATE),
@@ -291,6 +332,27 @@ SwitchStats::SwitchStats(ThreadLocalStatsMap* map, int numSwitches)
           RATE),
       dsfGrExpired_(map, kCounterPrefix + "dsfsession_gr_expired", SUM, RATE),
       dsfUpdateFailed_(map, kCounterPrefix + "dsf_update_failed", SUM, RATE),
+      hiPriPktsReceived_(
+          map,
+          kCounterPrefix + "hi_pri_pkts_received",
+          SUM,
+          RATE),
+      midPriPktsReceived_(
+          map,
+          kCounterPrefix + "mid_pri_pkts_received",
+          SUM,
+          RATE),
+      loPriPktsReceived_(
+          map,
+          kCounterPrefix + "lo_pri_pkts_received",
+          SUM,
+          RATE),
+      midPriPktsDropped_(
+          map,
+          kCounterPrefix + "mid_pri_pkts_dropped",
+          SUM,
+          RATE),
+      loPriPktsDropped_(map, kCounterPrefix + "lo_pri_pkts_dropped", SUM, RATE),
       multiSwitchStatus_(map, kCounterPrefix + "multi_switch", SUM, RATE)
 
 {
@@ -395,6 +457,8 @@ void SwitchStats::getHwAgentStatus(
     syncStatus.fdbEventSyncActive() = stats.getFdbEventSinkStatus();
     syncStatus.rxPktEventSyncActive() = stats.getRxPktEventSinkStatus();
     syncStatus.txPktEventSyncActive() = stats.getTxPktEventStreamStatus();
+    syncStatus.switchReachabilityChangeEventSyncActive() =
+        stats.getSwitchReachabilityChangeEventSinkStatus();
     syncStatus.statsEventSyncDisconnects() =
         stats.getStatsEventSinkDisconnectCount();
     syncStatus.fdbEventSyncDisconnects() =
@@ -405,6 +469,9 @@ void SwitchStats::getHwAgentStatus(
         stats.getRxPktEventSinkDisconnectCount();
     syncStatus.txPktEventSyncDisconnects() =
         stats.getTxPktEventStreamDisconnectCount();
+    syncStatus.switchReachabilityChangeEventSyncDisconnects() =
+        stats.getSwitchReachabilityChangeEventSinkDisconnectCount();
+
     statusMap.insert({switchIndex, std::move(syncStatus)});
     switchIndex++;
   }
@@ -579,6 +646,16 @@ SwitchStats::HwAgentStreamConnectionStatus::HwAgentStreamConnectionStatus(
               switchIndex,
               ".",
               "switch_reachability_change_event_received"),
+          SUM,
+          RATE)),
+      rxBadPktReceived_(TLTimeseries(
+          map,
+          folly::to<std::string>(
+              kCounterPrefix,
+              "switch.",
+              switchIndex,
+              ".",
+              "rx_bad_pkt_received"),
           SUM,
           RATE)) {}
 

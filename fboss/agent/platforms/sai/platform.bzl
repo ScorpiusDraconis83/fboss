@@ -9,10 +9,8 @@ headers = [
     "SaiBcmDarwinPlatformPort.h",
     "SaiBcmElbertPlatformPort.h",
     "SaiBcmFujiPlatformPort.h",
-    "SaiBcmGalaxyPlatformPort.h",
     "SaiBcmMinipackPlatformPort.h",
     "SaiBcmWedge100PlatformPort.h",
-    "SaiBcmWedge40PlatformPort.h",
     "SaiBcmYampPlatformPort.h",
     "SaiJanga800bicPlatformPort.h",
     "SaiMeru400bfuPlatformPort.h",
@@ -29,11 +27,7 @@ common_srcs = [
     "SaiPlatform.cpp",
     "SaiBcmPlatform.cpp",
     "SaiBcmPlatformPort.cpp",
-    "SaiBcmGalaxyPlatform.cpp",
-    "SaiBcmGalaxyFCPlatform.cpp",
-    "SaiBcmGalaxyLCPlatform.cpp",
     "SaiBcmWedge100Platform.cpp",
-    "SaiBcmWedge40Platform.cpp",
     "SaiBcmWedge400Platform.cpp",
     "SaiBcmWedge400PlatformPort.cpp",
     "SaiBcmDarwinPlatform.cpp",
@@ -70,10 +64,8 @@ common_srcs = [
 
 bcm_srcs = common_srcs + [
     "bcm/SaiBcmMinipackPlatform.cpp",
-    "bcm/SaiBcmGalaxyPlatformPort.cpp",
     "bcm/SaiBcmPlatform.cpp",
     "bcm/SaiBcmWedge100PlatformPort.cpp",
-    "bcm/SaiBcmWedge40PlatformPort.cpp",
     "facebook/SaiBcmMinipackPlatformPort.cpp",
     "facebook/SaiBcmFujiPlatformPort.cpp",
     "facebook/SaiBcmWedge400PlatformPort.cpp",
@@ -97,12 +89,10 @@ bcm_srcs = common_srcs + [
 
 fake_srcs = common_srcs + [
     "oss/SaiBcmMinipackPlatform.cpp",
-    "oss/SaiBcmGalaxyPlatformPort.cpp",
     "oss/SaiBcmPlatform.cpp",
     "oss/SaiBcmMinipackPlatformPort.cpp",
     "oss/SaiBcmFujiPlatformPort.cpp",
     "oss/SaiBcmWedge100PlatformPort.cpp",
-    "oss/SaiBcmWedge40PlatformPort.cpp",
     "oss/SaiBcmWedge400PlatformPort.cpp",
     "oss/SaiBcmDarwinPlatform.cpp",
     "oss/SaiBcmDarwinPlatformPort.cpp",
@@ -124,13 +114,11 @@ fake_srcs = common_srcs + [
 
 tajo_srcs = common_srcs + [
     "oss/SaiBcmMinipackPlatform.cpp",
-    "oss/SaiBcmGalaxyPlatformPort.cpp",
     "facebook/SaiWedge400CPlatformPort.cpp",
     "oss/SaiBcmPlatform.cpp",
     "oss/SaiBcmMinipackPlatformPort.cpp",
     "oss/SaiBcmFujiPlatformPort.cpp",
     "oss/SaiBcmWedge100PlatformPort.cpp",
-    "oss/SaiBcmWedge40PlatformPort.cpp",
     "oss/SaiBcmWedge400PlatformPort.cpp",
     "oss/SaiBcmDarwinPlatform.cpp",
     "oss/SaiBcmDarwinPlatformPort.cpp",
@@ -154,13 +142,9 @@ credo_srcs = [
     "cloudripper/SaiCloudRipperPhyPlatform.cpp",
 ]
 
-mrvl_srcs = [
-    "sandia/SaiSandiaPhyPlatform.cpp",
-]
-
 # TODO(ccpowers): Eventually we should be able to split up phy platform
 # sources based on the sai impl rather than including all phy sources
-phy_srcs = bcm_srcs + credo_srcs + mrvl_srcs
+phy_srcs = bcm_srcs + credo_srcs
 
 def _get_srcs(sai_impl):
     if not sai_impl:
@@ -169,7 +153,7 @@ def _get_srcs(sai_impl):
         return bcm_srcs
     if sai_impl.name == "leaba":
         return tajo_srcs
-    if sai_impl.name == "credo" or sai_impl.name == "mrvl":
+    if sai_impl.name == "credo":
         return phy_srcs
     return fake_srcs
 
@@ -198,7 +182,6 @@ def _sai_platform_lib(sai_impl, is_npu = True):
             "//fboss/agent/platforms/common/elbert:elbert_platform_mapping",
             "//fboss/agent/platforms/common/fake_test:fake_test_platform_mapping",
             "//fboss/agent/platforms/common/galaxy:galaxy_platform_mapping",
-            "//fboss/agent/platforms/common/sandia:sandia_platform_mapping",
             "//fboss/agent/platforms/common/wedge100:wedge100_platform_mapping",
             "//fboss/agent/platforms/common/wedge40:wedge40_platform_mapping",
             "//fboss/agent/platforms/common/wedge400c:wedge400c_platform_mapping",
@@ -222,8 +205,6 @@ def _sai_platform_lib(sai_impl, is_npu = True):
             "//fboss/agent/platforms/common/utils:bcm_yaml_config",
             "//fboss/lib/fpga:wedge400_fpga",
             "//fboss/lib/fpga/facebook/darwin:darwin_fpga",
-            "//fboss/lib/fpga/facebook/sandia:sandia_fpga",
-            "//fboss/lib/bsp/facebook/sandia:sandia_bsp",
             "//fboss/lib/fpga/facebook/cloudripper:cloudripper_fpga",
             "//fboss/lib/fpga/facebook/yamp:yamp_fpga",
             "//fboss/agent/platforms/common/cloud_ripper:cloud_ripper_platform_mapping",

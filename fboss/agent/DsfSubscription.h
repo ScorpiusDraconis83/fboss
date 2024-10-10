@@ -18,6 +18,7 @@ class InterfaceMap;
 class SystemPortMap;
 class SwSwitch;
 class SwitchState;
+class DsfUpdateValidator;
 
 class DsfSubscription {
  public:
@@ -62,6 +63,9 @@ class DsfSubscription {
     std::map<SwitchID, std::shared_ptr<SystemPortMap>> switchId2SystemPorts;
     std::map<SwitchID, std::shared_ptr<InterfaceMap>> switchId2Intfs;
   };
+  void updateDsfState(
+      const std::function<std::shared_ptr<SwitchState>(
+          const std::shared_ptr<SwitchState>&)>& updateDsfStateFn);
   std::string remoteEndpointStr() const;
   void updateWithRollbackProtection(
       const std::map<SwitchID, std::shared_ptr<SystemPortMap>>&
@@ -80,12 +84,14 @@ class DsfSubscription {
       const MultiSwitchSystemPortMap& newPortMap,
       const MultiSwitchInterfaceMap& newInterfaceMap);
   void queueDsfUpdate(DsfUpdate&& dsfUpdate);
+
   fsdb::FsdbStreamClient::State getStreamState() const;
 
   fsdb::SubscriptionOptions opts_;
   folly::EventBase* hwUpdateEvb_;
   std::unique_ptr<fsdb::FsdbPubSubManager> fsdbPubSubMgr_;
   std::unique_ptr<FsdbAdaptedSubManager> subMgr_;
+  std::unique_ptr<DsfUpdateValidator> validator_;
   std::string localNodeName_;
   std::string remoteNodeName_;
   std::set<SwitchID> remoteNodeSwitchIds_;
@@ -110,6 +116,8 @@ class DsfSubscription {
   std::shared_ptr<SwitchState> cachedState_;
   template <typename T>
   FRIEND_TEST(DsfSubscriptionTest, updateWithRollbackProtection);
+  template <typename T>
+  FRIEND_TEST(DsfSubscriptionTest, updateFailed);
   template <typename T>
   FRIEND_TEST(DsfSubscriptionTest, setupNeighbors);
 };

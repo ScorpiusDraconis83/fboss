@@ -15,6 +15,7 @@
 #include "fboss/agent/test/utils/AclTestUtils.h"
 #include "fboss/agent/test/utils/ConfigUtils.h"
 #include "fboss/agent/test/utils/LoadBalancerTestUtils.h"
+#include "fboss/agent/test/utils/MirrorTestUtils.h"
 #include "fboss/agent/test/utils/ScaleTestUtils.h"
 #include "fboss/lib/CommonUtils.h"
 
@@ -22,13 +23,23 @@ DECLARE_bool(flowletSwitchingEnable);
 
 namespace {
 enum AclType {
-  UDF_ACK,
+  UDF_ACK, // match on bth_opcode
+  UDF_NAK, // match on bth_opcode + aeth_syndrome
+  UDF_ACK_WITH_NAK,
+  UDF_WR_IMM_ZERO, // match on bth_opcode + reth_dma_length
   FLOWLET,
   FLOWLET_WITH_UDF_ACK,
-  UDF_FLOWLET,
+  FLOWLET_WITH_UDF_NAK,
+  UDF_FLOWLET, // match on bth_reserved
   UDF_FLOWLET_WITH_UDF_ACK,
+  UDF_FLOWLET_WITH_UDF_NAK,
 };
 }
+
+const std::string kSflowMirrorName = "sflow_mirror";
+const std::string sflowDestinationVIP = "2001::101";
+const std::string aclMirror = "acl_mirror";
+const std::string aclDestinationVIP = "2002::101";
 
 namespace facebook::fboss {
 
@@ -67,12 +78,21 @@ class AgentAclCounterTestBase : public AgentHwTest {
       case AclType::UDF_ACK:
         aclName = "test-udf-acl";
         break;
+      case AclType::UDF_NAK:
+      case AclType::UDF_ACK_WITH_NAK:
+        aclName = "test-udf-nak-acl";
+        break;
+      case AclType::UDF_WR_IMM_ZERO:
+        aclName = "test-wr-imm-zero-acl";
+        break;
       case AclType::FLOWLET:
       case AclType::FLOWLET_WITH_UDF_ACK:
+      case AclType::FLOWLET_WITH_UDF_NAK:
         aclName = "test-flowlet-acl";
         break;
       case AclType::UDF_FLOWLET:
       case AclType::UDF_FLOWLET_WITH_UDF_ACK:
+      case AclType::UDF_FLOWLET_WITH_UDF_NAK:
         aclName = utility::kFlowletAclName;
         break;
       default:
@@ -102,6 +122,39 @@ class AgentAclCounterTestBase : public AgentHwTest {
       }
       return out;
     });
+  }
+
+  RoutePrefixV6 getMirrorDestRoutePrefix(const folly::IPAddress dip) const {
+    return RoutePrefixV6{
+        folly::IPAddressV6{dip.str()}, static_cast<uint8_t>(dip.bitCount())};
+  }
+
+  void addSamplingConfig(cfg::SwitchConfig& config) {
+    auto trafficPort = getAgentEnsemble()->masterLogicalPortIds(
+        {cfg::PortType::INTERFACE_PORT})[utility::kTrafficPortIndex];
+    std::vector<PortID> samplePorts = {trafficPort};
+    utility::configureSflowSampling(config, kSflowMirrorName, samplePorts, 1);
+  }
+
+  void resolveMirror(const std::string& mirrorName, uint8_t dstPort) {
+    auto destinationPort = getAgentEnsemble()->masterLogicalPortIds(
+        {cfg::PortType::INTERFACE_PORT})[dstPort];
+    resolveNeigborAndProgramRoutes(*helper_, 1);
+    applyNewState([&](const std::shared_ptr<SwitchState>& in) {
+      boost::container::flat_set<PortDescriptor> nhopPorts{
+          PortDescriptor(destinationPort)};
+      return helper_->resolveNextHops(in, nhopPorts);
+    });
+    getSw()->getUpdateEvb()->runInFbossEventBaseThreadAndWait([] {});
+    auto mirror = getSw()->getState()->getMirrors()->getNodeIf(mirrorName);
+    auto dip = mirror->getDestinationIp();
+    if (dip.has_value()) {
+      auto prefix = getMirrorDestRoutePrefix(dip.value());
+      boost::container::flat_set<PortDescriptor> nhopPorts{
+          PortDescriptor(destinationPort)};
+      auto wrapper = getSw()->getRouteUpdater();
+      helper_->programRoutes(&wrapper, nhopPorts, {prefix});
+    }
   }
 
   void generateApplyConfig(AclType aclType) {
@@ -147,7 +200,9 @@ class AgentAclCounterTestBase : public AgentHwTest {
   // roce write-immediate - udpport=4791 + opcode=11 + reserved=1
   size_t sendRoceTraffic(
       const PortID frontPanelEgrPort,
-      int roceOpcode = utility::kUdfRoceOpcodeAck) {
+      int roceOpcode = utility::kUdfRoceOpcodeAck,
+      std::optional<std::vector<uint8_t>> nxtHdr =
+          std::optional<std::vector<uint8_t>>()) {
     auto vlanId = utility::firstVlanID(getProgrammedState());
     auto intfMac = utility::getFirstInterfaceMac(getProgrammedState());
     return utility::pumpRoCETraffic(
@@ -162,7 +217,8 @@ class AgentAclCounterTestBase : public AgentHwTest {
         std::nullopt,
         1 /* one packet */,
         roceOpcode,
-        utility::kRoceReserved);
+        utility::kRoceReserved,
+        nxtHdr);
   }
 
   auto verifyAclType(bool bumpOnHit, AclType aclType) {
@@ -175,13 +231,29 @@ class AgentAclCounterTestBase : public AgentHwTest {
         getSw(), getCounterName(aclType), true /* bytes */);
     size_t sizeOfPacketSent = 0;
 
+    std::vector<uint8_t> aethHdr = {0x0a, 0x11, 0x22, 0x33};
+    // RDMAeth header with DMA length 0
+    std::vector<uint8_t> rethHdr(16);
+
     switch (aclType) {
       case AclType::UDF_ACK:
-        sizeOfPacketSent = sendRoceTraffic(egressPort);
+        sizeOfPacketSent =
+            sendRoceTraffic(egressPort, utility::kUdfRoceOpcodeAck, aethHdr);
+        break;
+      case AclType::UDF_NAK:
+        aethHdr[0] = 0x6a; // MSB bits 2 and 3 indicate NAK
+        sizeOfPacketSent =
+            sendRoceTraffic(egressPort, utility::kUdfRoceOpcodeAck, aethHdr);
         break;
       case AclType::FLOWLET:
       case AclType::UDF_FLOWLET:
-        sizeOfPacketSent = sendRoceTraffic(egressPort, 11 /* not ack opcode */);
+        rethHdr[15] = 0xFF; // non-zero sized packet
+        sizeOfPacketSent = sendRoceTraffic(
+            egressPort, utility::kUdfRoceOpcodeWriteImmediate, rethHdr);
+        break;
+      case AclType::UDF_WR_IMM_ZERO:
+        sizeOfPacketSent = sendRoceTraffic(
+            egressPort, utility::kUdfRoceOpcodeWriteImmediate, rethHdr);
         break;
       default:
         break;
@@ -228,10 +300,21 @@ class AgentAclCounterTestBase : public AgentHwTest {
     });
   }
 
+  // order of verification is sometimes important due to acl priority
   void verifyAcl(AclType aclType) {
     switch (aclType) {
       case AclType::UDF_ACK:
         verifyAclType(true, AclType::UDF_ACK);
+        break;
+      case AclType::UDF_NAK:
+        verifyAclType(true, AclType::UDF_NAK);
+        break;
+      case AclType::UDF_ACK_WITH_NAK:
+        verifyAclType(true, AclType::UDF_ACK);
+        verifyAclType(true, AclType::UDF_NAK);
+        break;
+      case AclType::UDF_WR_IMM_ZERO:
+        verifyAclType(true, AclType::UDF_WR_IMM_ZERO);
         break;
       case AclType::FLOWLET:
         verifyAclType(true, AclType::FLOWLET);
@@ -240,6 +323,10 @@ class AgentAclCounterTestBase : public AgentHwTest {
         verifyAclType(true, AclType::FLOWLET);
         verifyAclType(true, AclType::UDF_ACK);
         break;
+      case AclType::FLOWLET_WITH_UDF_NAK:
+        verifyAclType(true, AclType::FLOWLET);
+        verifyAclType(true, AclType::UDF_NAK);
+        break;
       case AclType::UDF_FLOWLET:
         verifyAclType(true, AclType::UDF_FLOWLET);
         break;
@@ -247,20 +334,63 @@ class AgentAclCounterTestBase : public AgentHwTest {
         verifyAclType(true, AclType::UDF_FLOWLET);
         verifyAclType(true, AclType::UDF_ACK);
         break;
+      case AclType::UDF_FLOWLET_WITH_UDF_NAK:
+        verifyAclType(true, AclType::UDF_FLOWLET);
+        verifyAclType(true, AclType::UDF_NAK);
+        break;
       default:
         break;
     }
   }
 
-  void addUdfAcl(
+  std::vector<cfg::AclUdfEntry> addUdfTable(
+      const std::vector<std::string>& udfGroups,
+      const std::vector<std::vector<int8_t>>& roceBytes,
+      const std::vector<std::vector<int8_t>>& roceMask) const {
+    std::vector<cfg::AclUdfEntry> udfTable;
+    for (int i = 0; i < udfGroups.size(); i++) {
+      cfg::AclUdfEntry aclUdfEntry;
+      aclUdfEntry.udfGroup() = udfGroups[i];
+      aclUdfEntry.roceBytes() = roceBytes[i];
+      aclUdfEntry.roceMask() = roceMask[i];
+      udfTable.push_back(aclUdfEntry);
+    }
+    return udfTable;
+  }
+
+  void addRoceAcl(
       cfg::SwitchConfig* config,
       const std::string& aclName,
-      const std::string& counterName) const {
+      const std::string& counterName,
+      const std::optional<std::string>& udfGroups,
+      const std::optional<int>& roceOpcode,
+      const std::optional<int>& roceBytes,
+      const std::optional<int>& roceMask,
+      const std::optional<std::vector<cfg::AclUdfEntry>>& udfTable) const {
     auto acl = utility::addAcl(config, aclName, aclActionType_);
     std::vector<cfg::CounterType> setCounterTypes{
         cfg::CounterType::PACKETS, cfg::CounterType::BYTES};
-    acl->udfGroups() = {utility::kUdfAclRoceOpcodeGroupName};
-    acl->roceOpcode() = utility::kUdfRoceOpcodeAck;
+    if (udfTable.has_value()) {
+      acl->udfTable() = udfTable.value();
+    }
+    if (udfGroups.has_value()) {
+      acl->udfGroups() = {udfGroups.value()};
+    }
+    if (roceOpcode.has_value()) {
+      acl->roceOpcode() = roceOpcode.value();
+    }
+    if (roceBytes.has_value()) {
+      acl->roceBytes() = {static_cast<signed char>(roceBytes.value())};
+    }
+    if (roceMask.has_value()) {
+      acl->roceMask() = {static_cast<signed char>(roceMask.value())};
+    }
+    if (aclName == getAclName(AclType::UDF_NAK)) {
+      cfg::Ttl ttl;
+      ttl.value() = 255;
+      ttl.mask() = 0xFF;
+      acl->ttl() = ttl;
+    }
     utility::addAclStat(
         config, aclName, counterName, std::move(setCounterTypes));
   }
@@ -268,34 +398,143 @@ class AgentAclCounterTestBase : public AgentHwTest {
   void addAclAndStat(cfg::SwitchConfig* config, AclType aclType) const {
     auto aclName = getAclName(aclType);
     auto counterName = getCounterName(aclType);
+    const signed char bm = 0xFF;
+    std::vector<signed char> dmaLengthZeros = {0x0, 0x0};
+    std::vector<signed char> dmaLengthMask = {bm, bm};
     switch (aclType) {
       case AclType::UDF_ACK:
-        config->udfConfig() = utility::addUdfAclConfig();
-        addUdfAcl(config, aclName, counterName);
+        config->udfConfig() =
+            utility::addUdfAclConfig(utility::kUdfOffsetBthOpcode);
+        addRoceAcl(
+            config,
+            aclName,
+            counterName,
+            utility::kUdfAclRoceOpcodeGroupName,
+            utility::kUdfRoceOpcodeAck,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt);
         break;
+      case AclType::UDF_NAK: {
+        config->udfConfig() = utility::addUdfAclConfig(
+            utility::kUdfOffsetBthOpcode | utility::kUdfOffsetAethSyndrome);
+        auto udfTable = addUdfTable(
+            {utility::kUdfAclRoceOpcodeGroupName,
+             utility::kUdfAclAethNakGroupName},
+            {{utility::kUdfRoceOpcodeAck}, {utility::kAethSyndromeWithNak}},
+            {{utility::kUdfRoceOpcodeMask}, {utility::kAethSyndromeWithNak}});
+        addRoceAcl(
+            config,
+            aclName,
+            counterName,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::move(udfTable));
+      } break;
+      case AclType::UDF_WR_IMM_ZERO: {
+        config->udfConfig() = utility::addUdfAclConfig(
+            utility::kUdfOffsetBthOpcode | utility::kUdfOffsetRethDmaLength);
+        auto udfTable = addUdfTable(
+            {utility::kUdfAclRoceOpcodeGroupName,
+             utility::kUdfAclRethWrImmZeroGroupName},
+            {{utility::kUdfRoceOpcodeWriteImmediate},
+             std::move(dmaLengthZeros)},
+            {{utility::kUdfRoceOpcodeMask}, std::move(dmaLengthMask)});
+        addRoceAcl(
+            config,
+            aclName,
+            counterName,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::move(udfTable));
+      } break;
+      case AclType::UDF_ACK_WITH_NAK: {
+        config->udfConfig() = utility::addUdfAclConfig(
+            utility::kUdfOffsetBthOpcode | utility::kUdfOffsetAethSyndrome);
+        auto udfTable = addUdfTable(
+            {utility::kUdfAclRoceOpcodeGroupName,
+             utility::kUdfAclAethNakGroupName},
+            {{utility::kUdfRoceOpcodeAck}, {utility::kAethSyndromeWithNak}},
+            {{utility::kUdfRoceOpcodeMask}, {utility::kAethSyndromeWithNak}});
+        addRoceAcl(
+            config,
+            aclName,
+            counterName,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::move(udfTable));
+        addRoceAcl(
+            config,
+            getAclName(AclType::UDF_ACK),
+            getCounterName(AclType::UDF_ACK),
+            utility::kUdfAclRoceOpcodeGroupName,
+            utility::kUdfRoceOpcodeAck,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt);
+      } break;
       case AclType::FLOWLET:
         utility::addFlowletAcl(*config, aclName, counterName, false);
         break;
       case AclType::FLOWLET_WITH_UDF_ACK:
-        config->udfConfig() = utility::addUdfAclConfig();
-        addUdfAcl(
+        config->udfConfig() =
+            utility::addUdfAclConfig(utility::kUdfOffsetBthOpcode);
+        addRoceAcl(
             config,
             getAclName(AclType::UDF_ACK),
-            getCounterName(AclType::UDF_ACK));
+            getCounterName(AclType::UDF_ACK),
+            utility::kUdfAclRoceOpcodeGroupName,
+            utility::kUdfRoceOpcodeAck,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt);
         utility::addFlowletAcl(*config, aclName, counterName, false);
         break;
       case AclType::UDF_FLOWLET:
-        config->udfConfig() = utility::addUdfFlowletAclConfig();
+        config->udfConfig() =
+            utility::addUdfAclConfig(utility::kUdfOffsetBthReserved);
         utility::addFlowletAcl(*config, aclName, counterName);
         break;
       case AclType::UDF_FLOWLET_WITH_UDF_ACK:
-        config->udfConfig() = utility::addUdfAckAndFlowletAclConfig();
-        addUdfAcl(
+        config->udfConfig() = utility::addUdfAclConfig(
+            utility::kUdfOffsetBthOpcode | utility::kUdfOffsetBthReserved);
+        addRoceAcl(
             config,
             getAclName(AclType::UDF_ACK),
-            getCounterName(AclType::UDF_ACK));
+            getCounterName(AclType::UDF_ACK),
+            utility::kUdfAclRoceOpcodeGroupName,
+            utility::kUdfRoceOpcodeAck,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt);
         utility::addFlowletAcl(*config, aclName, counterName);
         break;
+      case AclType::UDF_FLOWLET_WITH_UDF_NAK: {
+        config->udfConfig() = utility::addUdfAclConfig(
+            utility::kUdfOffsetBthOpcode | utility::kUdfOffsetBthReserved |
+            utility::kUdfOffsetAethSyndrome);
+        auto udfTable = addUdfTable(
+            {utility::kUdfAclRoceOpcodeGroupName,
+             utility::kUdfAclAethNakGroupName},
+            {{utility::kUdfRoceOpcodeAck}, {utility::kAethSyndromeWithNak}},
+            {{utility::kUdfRoceOpcodeMask}, {utility::kAethSyndromeWithNak}});
+        addRoceAcl(
+            config,
+            getAclName(AclType::UDF_NAK),
+            getCounterName(AclType::UDF_NAK),
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::nullopt,
+            std::move(udfTable));
+        utility::addFlowletAcl(*config, aclName, counterName);
+      } break;
       default:
         break;
     }
@@ -332,6 +571,91 @@ class AgentFlowletSwitchingTest : public AgentAclCounterTestBase {
   }
 };
 
+class AgentFlowletAclPriorityTest : public AgentFlowletSwitchingTest {
+ public:
+  std::vector<production_features::ProductionFeature>
+  getProductionFeaturesVerified() const override {
+    return {
+        production_features::ProductionFeature::DLB,
+        production_features::ProductionFeature::UDF_WR_IMMEDIATE_ACL,
+        production_features::ProductionFeature::SINGLE_ACL_TABLE};
+  }
+};
+
+class AgentFlowletMirrorTest : public AgentFlowletSwitchingTest {
+ public:
+  // TH* supports upto 4 different source types to mirror to same egress port.
+  // Here IFP mirror action and ingress port sflow actions can generate 2 copies
+  // going to same VIP or different VIP (different egress port in the test)
+  enum MirrorScope {
+    MIRROR_ONLY,
+    MIRROR_SFLOW_SAME_VIP,
+    MIRROR_SFLOW_DIFFERENT_VIP,
+  };
+  std::vector<production_features::ProductionFeature>
+  getProductionFeaturesVerified() const override {
+    return {
+        production_features::ProductionFeature::DLB,
+        production_features::ProductionFeature::SFLOWv6_SAMPLING,
+        production_features::ProductionFeature::INGRESS_MIRRORING,
+        production_features::ProductionFeature::SINGLE_ACL_TABLE};
+  }
+
+ protected:
+  cfg::SwitchConfig initialConfig(
+      const AgentEnsemble& ensemble) const override {
+    auto cfg = utility::onePortPerInterfaceConfig(
+        ensemble.getSw(),
+        ensemble.masterLogicalPortIds(),
+        true /*interfaceHasSubnet*/);
+    utility::addFlowletConfigs(cfg, ensemble.masterLogicalPortIds());
+    addAclAndStat(&cfg, AclType::UDF_NAK);
+    // overwrite existing traffic policy which only has a counter action
+    // It is added in addAclAndStat above
+    cfg.dataPlaneTrafficPolicy() = cfg::TrafficPolicyConfig();
+    std::string counterName = getCounterName(AclType::UDF_NAK);
+    utility::addAclMatchActions(
+        &cfg, getAclName(AclType::UDF_NAK), std::move(counterName), aclMirror);
+
+    // mirror session for acl
+    utility::configureSflowMirror(
+        cfg, aclMirror, false /* truncate */, aclDestinationVIP, 6344);
+
+    return cfg;
+  }
+
+  void verifyMirror(MirrorScope scope) {
+    // In addition to counting ACL hit with verifyAcl, verify packet mirrored
+    auto mirrorPort = helper_->ecmpPortDescriptorAt(1).phyPortID();
+    auto sflowPort = helper_->ecmpPortDescriptorAt(2).phyPortID();
+    auto pktsMirrorBefore =
+        *getNextUpdatedPortStats(mirrorPort).outUnicastPkts__ref();
+    auto pktsSflowBefore =
+        *getNextUpdatedPortStats(sflowPort).outUnicastPkts__ref();
+
+    verifyAcl(AclType::UDF_NAK);
+
+    WITH_RETRIES({
+      auto pktsMirrorAfter =
+          *getNextUpdatedPortStats(mirrorPort).outUnicastPkts__ref();
+      auto pktsSflowAfter =
+          *getNextUpdatedPortStats(sflowPort).outUnicastPkts__ref();
+      XLOG(DBG2) << "PacketMirrorCounter: " << pktsMirrorBefore << " -> "
+                 << pktsMirrorAfter
+                 << " PacketSflowCounter: " << pktsSflowBefore << " -> "
+                 << pktsSflowAfter;
+      if (scope == MirrorScope::MIRROR_ONLY) {
+        EXPECT_EVENTUALLY_GT(pktsMirrorAfter, pktsMirrorBefore);
+      } else if (scope == MirrorScope::MIRROR_SFLOW_SAME_VIP) {
+        EXPECT_EVENTUALLY_GE(pktsMirrorAfter, pktsMirrorBefore + 2);
+      } else if (scope == MirrorScope::MIRROR_SFLOW_DIFFERENT_VIP) {
+        EXPECT_EVENTUALLY_GT(pktsMirrorAfter, pktsMirrorBefore);
+        EXPECT_EVENTUALLY_GT(pktsSflowAfter, pktsSflowBefore);
+      }
+    });
+  }
+};
+
 // empty to UDF A
 TEST_F(AgentFlowletSwitchingTest, VerifyFlowletToUdfFlowlet) {
   flowletSwitchingAclHitHelper(AclType::FLOWLET, AclType::UDF_FLOWLET);
@@ -352,6 +676,18 @@ TEST_F(AgentFlowletSwitchingTest, VerifyUdfAckToUdfFlowlet) {
 TEST_F(AgentFlowletSwitchingTest, VerifyUdfFlowletToUdfFlowletWithUdfAck) {
   flowletSwitchingAclHitHelper(
       AclType::UDF_FLOWLET, AclType::UDF_FLOWLET_WITH_UDF_ACK);
+}
+
+// UDF A to UDF A + B + C
+TEST_F(AgentFlowletSwitchingTest, VerifyUdfFlowletToUdfFlowletWithUdfNak) {
+  flowletSwitchingAclHitHelper(
+      AclType::UDF_FLOWLET, AclType::UDF_FLOWLET_WITH_UDF_NAK);
+}
+
+// UDF A + B + C to UDF B + C
+TEST_F(AgentFlowletSwitchingTest, VerifyUdfFlowletWithUdfNakToUdfNak) {
+  flowletSwitchingAclHitHelper(
+      AclType::UDF_FLOWLET_WITH_UDF_NAK, AclType::UDF_NAK);
 }
 
 // UDF A + B to UDF B
@@ -376,12 +712,146 @@ TEST_F(AgentFlowletSwitchingTest, VerifyUdfFlowletToFlowlet) {
   flowletSwitchingAclHitHelper(AclType::UDF_FLOWLET, AclType::FLOWLET);
 }
 
+TEST_F(AgentFlowletSwitchingTest, VerifyUdfFlowletToUdfWrImmZero) {
+  flowletSwitchingAclHitHelper(AclType::UDF_FLOWLET, AclType::UDF_WR_IMM_ZERO);
+}
+
+TEST_F(AgentFlowletSwitchingTest, VerifyUdfWrImmZeroToUdfFlowlet) {
+  flowletSwitchingAclHitHelper(AclType::UDF_WR_IMM_ZERO, AclType::UDF_FLOWLET);
+}
+
 TEST_F(AgentFlowletSwitchingTest, VerifyOneUdfGroupAddition) {
   verifyUdfAddDelete(AclType::UDF_FLOWLET, AclType::UDF_FLOWLET_WITH_UDF_ACK);
 }
 
 TEST_F(AgentFlowletSwitchingTest, VerifyOneUdfGroupDeletion) {
   verifyUdfAddDelete(AclType::UDF_FLOWLET_WITH_UDF_ACK, AclType::UDF_FLOWLET);
+}
+
+TEST_F(AgentFlowletSwitchingTest, VerifyUdfNakToUdfAckWithNak) {
+  flowletSwitchingAclHitHelper(AclType::UDF_NAK, AclType::UDF_ACK_WITH_NAK);
+}
+
+TEST_F(AgentFlowletSwitchingTest, VerifyUdfAckWithNakToUdfNak) {
+  flowletSwitchingAclHitHelper(AclType::UDF_ACK_WITH_NAK, AclType::UDF_NAK);
+}
+
+TEST_F(AgentFlowletMirrorTest, VerifyUdfNakMirrorAction) {
+  auto setup = [this]() {
+    this->setup();
+    auto newCfg{initialConfig(*getAgentEnsemble())};
+    applyNewConfig(newCfg);
+    resolveMirror(aclMirror, utility::kMirrorToPortIndex);
+  };
+
+  auto verify = [this]() { verifyMirror(MirrorScope::MIRROR_ONLY); };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+TEST_F(AgentFlowletMirrorTest, VerifyUdfNakMirrorSflowSameVip) {
+  auto setup = [this]() {
+    this->setup();
+    auto newCfg{initialConfig(*getAgentEnsemble())};
+
+    // mirror session for ingress port sflow
+    // use same VIP as ACL mirror, only dst port varies
+    utility::configureSflowMirror(
+        newCfg, kSflowMirrorName, false /* truncate */, aclDestinationVIP);
+    // configure sampling on traffic port
+    addSamplingConfig(newCfg);
+
+    applyNewConfig(newCfg);
+    resolveMirror(aclMirror, utility::kMirrorToPortIndex);
+  };
+
+  auto verify = [this]() { verifyMirror(MirrorScope::MIRROR_SFLOW_SAME_VIP); };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+TEST_F(AgentFlowletMirrorTest, VerifyUdfNakMirrorSflowDifferentVip) {
+  auto setup = [this]() {
+    this->setup();
+    auto newCfg{initialConfig(*getAgentEnsemble())};
+
+    // mirror session for ingress port sflow
+    utility::configureSflowMirror(
+        newCfg, kSflowMirrorName, false /* truncate */, sflowDestinationVIP);
+    // configure sampling on traffic port
+    addSamplingConfig(newCfg);
+
+    applyNewConfig(newCfg);
+    resolveMirror(aclMirror, utility::kMirrorToPortIndex);
+    resolveMirror(kSflowMirrorName, utility::kSflowToPortIndex);
+  };
+
+  auto verify = [this]() {
+    verifyMirror(MirrorScope::MIRROR_SFLOW_DIFFERENT_VIP);
+  };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+// Skip this and next test due to lack of TCAM in ACL table on TH3
+TEST_F(AgentFlowletAclPriorityTest, VerifyUdfAclPriority) {
+  auto setup = [this]() {
+    this->setup();
+    auto newCfg{initialConfig(*getAgentEnsemble())};
+    // production priorities
+    addAclAndStat(&newCfg, AclType::UDF_NAK);
+    addAclAndStat(&newCfg, AclType::UDF_ACK);
+    addAclAndStat(&newCfg, AclType::UDF_WR_IMM_ZERO);
+    addAclAndStat(&newCfg, AclType::UDF_FLOWLET);
+    // Keep this at the end since each of the above calls update udfConfig
+    // differently
+    newCfg.udfConfig() = utility::addUdfAclConfig(
+        utility::kUdfOffsetBthOpcode | utility::kUdfOffsetBthReserved |
+        utility::kUdfOffsetAethSyndrome | utility::kUdfOffsetRethDmaLength);
+    applyNewConfig(newCfg);
+  };
+
+  auto verify = [this]() {
+    verifyAcl(AclType::UDF_NAK);
+    verifyAcl(AclType::UDF_ACK);
+    verifyAcl(AclType::UDF_WR_IMM_ZERO);
+    verifyAcl(AclType::UDF_FLOWLET);
+  };
+
+  verifyAcrossWarmBoots(setup, verify);
+}
+
+TEST_F(AgentFlowletAclPriorityTest, VerifyUdfAclPriorityWB) {
+  auto setup = [this]() {
+    this->setup();
+    auto newCfg{initialConfig(*getAgentEnsemble())};
+    applyNewConfig(newCfg);
+  };
+
+  auto setupPostWarmboot = [this]() {
+    this->setup();
+    auto newCfg{initialConfig(*getAgentEnsemble())};
+    // production priorities
+    addAclAndStat(&newCfg, AclType::UDF_NAK);
+    addAclAndStat(&newCfg, AclType::UDF_ACK);
+    addAclAndStat(&newCfg, AclType::UDF_WR_IMM_ZERO);
+    addAclAndStat(&newCfg, AclType::UDF_FLOWLET);
+    // Keep this at the end since each of the above calls update udfConfig
+    // differently
+    newCfg.udfConfig() = utility::addUdfAclConfig(
+        utility::kUdfOffsetBthOpcode | utility::kUdfOffsetBthReserved |
+        utility::kUdfOffsetAethSyndrome | utility::kUdfOffsetRethDmaLength);
+    applyNewConfig(newCfg);
+  };
+
+  auto verifyPostWarmboot = [this]() {
+    verifyAcl(AclType::UDF_NAK);
+    verifyAcl(AclType::UDF_ACK);
+    verifyAcl(AclType::UDF_WR_IMM_ZERO);
+    verifyAcl(AclType::UDF_FLOWLET);
+  };
+
+  verifyAcrossWarmBoots(setup, []() {}, setupPostWarmboot, verifyPostWarmboot);
 }
 
 class AgentFlowletResourceTest : public AgentHwTest {

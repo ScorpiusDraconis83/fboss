@@ -82,6 +82,9 @@ void assertMaxBufferPoolSize(const SaiPlatform* platform) {
 }
 
 } // namespace
+
+const std::string kDefaultEgressBufferPoolName{"default"};
+
 SaiBufferManager::SaiBufferManager(
     SaiStore* saiStore,
     SaiManagerTable* managerTable,
@@ -153,26 +156,55 @@ uint64_t SaiBufferManager::getMaxEgressPoolBytes(const SaiPlatform* platform) {
   return 0;
 }
 
-void SaiBufferManager::setupEgressBufferPool() {
-  if (egressBufferPoolHandle_) {
+void SaiBufferManager::setupEgressBufferPool(
+    const std::optional<BufferPoolFields>& bufferPoolCfg) {
+  auto bufferPoolName = bufferPoolCfg.has_value()
+      ? *bufferPoolCfg->id()
+      : kDefaultEgressBufferPoolName;
+  if (egressBufferPoolHandle_.find(bufferPoolName) !=
+      egressBufferPoolHandle_.end()) {
     return;
   }
   assertMaxBufferPoolSize(platform_);
-  egressBufferPoolHandle_ = std::make_unique<SaiBufferPoolHandle>();
-  auto& store = saiStore_->get<SaiBufferPoolTraits>();
-  std::optional<SaiBufferPoolTraits::Attributes::XoffSize> xoffSize{};
-  SaiBufferPoolTraits::CreateAttributes c{
+  uint64_t poolSize;
+  std::optional<SaiBufferPoolTraits::Attributes::XoffSize> xoffSize;
+  if (bufferPoolCfg.has_value() && *bufferPoolCfg->sharedBytes()) {
+    // TODO: Account for reserved once available
+    poolSize = *bufferPoolCfg->sharedBytes();
+  } else {
+    poolSize = getMaxEgressPoolBytes(platform_);
+  }
+  SaiBufferPoolTraits::CreateAttributes attributes{
       SAI_BUFFER_POOL_TYPE_EGRESS,
-      getMaxEgressPoolBytes(platform_),
+      poolSize,
       SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC,
       xoffSize};
-  egressBufferPoolHandle_->bufferPool =
-      store.setObject(SAI_BUFFER_POOL_TYPE_EGRESS, c);
+  SaiBufferPoolTraits::AdapterHostKey k = tupleProjection<
+      SaiBufferPoolTraits::CreateAttributes,
+      SaiBufferPoolTraits::AdapterHostKey>(attributes);
+  auto bufferPoolHandle = std::make_unique<SaiBufferPoolHandle>();
+  auto& store = saiStore_->get<SaiBufferPoolTraits>();
+  bufferPoolHandle->bufferPool = store.setObject(k, attributes);
+  egressBufferPoolHandle_[bufferPoolName] = std::move(bufferPoolHandle);
+}
+
+void SaiBufferManager::setupBufferPool(const PortQueue& queue) {
+  if (platform_->getAsic()->isSupported(
+          HwAsic::Feature::SHARED_INGRESS_EGRESS_BUFFER_POOL)) {
+    setupIngressEgressBufferPool();
+  } else {
+    std::optional<BufferPoolFields> bufferPoolCfg;
+    if (queue.getBufferPoolConfig().has_value() &&
+        queue.getBufferPoolConfig().value()) {
+      bufferPoolCfg = queue.getBufferPoolConfig().value()->toThrift();
+    }
+    setupEgressBufferPool(bufferPoolCfg);
+  }
 }
 
 void SaiBufferManager::setupIngressBufferPool(
     const std::string& bufferPoolName,
-    const state::BufferPoolFields& bufferPoolCfg) {
+    const BufferPoolFields& bufferPoolCfg) {
   if (ingressBufferPoolHandle_) {
     return;
   }
@@ -191,13 +223,15 @@ void SaiBufferManager::setupIngressBufferPool(
         platform_->getAsic()->getNumMemoryBuffers();
   }
 #endif
-  SaiBufferPoolTraits::CreateAttributes c{
+  SaiBufferPoolTraits::CreateAttributes attributes{
       SAI_BUFFER_POOL_TYPE_INGRESS,
       poolSize,
       SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC,
       xoffSize};
-  ingressBufferPoolHandle_->bufferPool =
-      store.setObject(SAI_BUFFER_POOL_TYPE_INGRESS, c);
+  SaiBufferPoolTraits::AdapterHostKey k = tupleProjection<
+      SaiBufferPoolTraits::CreateAttributes,
+      SaiBufferPoolTraits::AdapterHostKey>(attributes);
+  ingressBufferPoolHandle_->bufferPool = store.setObject(k, attributes);
   ingressBufferPoolHandle_->bufferPoolName = bufferPoolName;
 }
 
@@ -210,7 +244,7 @@ void SaiBufferManager::createOrUpdateIngressEgressBufferPool(
   }
   XLOG(DBG2) << "Pool size: " << poolSize
              << ", Xoff size: " << (newXoffSize.has_value() ? *newXoffSize : 0);
-  SaiBufferPoolTraits::CreateAttributes c{
+  SaiBufferPoolTraits::CreateAttributes attributes{
       SAI_BUFFER_POOL_TYPE_BOTH,
       poolSize,
       SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC,
@@ -220,13 +254,15 @@ void SaiBufferManager::createOrUpdateIngressEgressBufferPool(
   if (!ingressEgressBufferPoolHandle_) {
     ingressEgressBufferPoolHandle_ = std::make_unique<SaiBufferPoolHandle>();
   }
-  ingressEgressBufferPoolHandle_->bufferPool =
-      store.setObject(SAI_BUFFER_POOL_TYPE_BOTH, c);
+  SaiBufferPoolTraits::AdapterHostKey k = tupleProjection<
+      SaiBufferPoolTraits::CreateAttributes,
+      SaiBufferPoolTraits::AdapterHostKey>(attributes);
+  ingressEgressBufferPoolHandle_->bufferPool = store.setObject(k, attributes);
 }
 
 void SaiBufferManager::setupIngressEgressBufferPool(
     const std::optional<std::string>& bufferPoolName,
-    const std::optional<state::BufferPoolFields>& bufferPoolCfg) {
+    const std::optional<BufferPoolFields>& bufferPoolCfg) {
   uint64_t poolSize{0};
   if (FLAGS_ingress_egress_buffer_pool_size) {
     // An option for test to override the buffer pool size to be used.
@@ -273,20 +309,42 @@ SaiBufferPoolHandle* SaiBufferManager::getIngressBufferPoolHandle() const {
                                         : ingressBufferPoolHandle_.get();
 }
 
-SaiBufferPoolHandle* SaiBufferManager::getEgressBufferPoolHandle() const {
-  return ingressEgressBufferPoolHandle_ ? ingressEgressBufferPoolHandle_.get()
-                                        : egressBufferPoolHandle_.get();
+SaiBufferPoolHandle* SaiBufferManager::getEgressBufferPoolHandle(
+    const PortQueue& queue) const {
+  if (ingressEgressBufferPoolHandle_) {
+    return ingressEgressBufferPoolHandle_.get();
+  } else {
+    // There are multiple egress pools possible, so get
+    // information for the right egress pool
+    std::string poolName = kDefaultEgressBufferPoolName;
+    if (queue.getBufferPoolConfig().has_value() &&
+        queue.getBufferPoolConfig().value()) {
+      auto bufferPoolCfg = queue.getBufferPoolConfig().value()->toThrift();
+      poolName = *bufferPoolCfg.id();
+    }
+    auto poolIter = egressBufferPoolHandle_.find(poolName);
+    if (poolIter == egressBufferPoolHandle_.end()) {
+      throw FbossError("Egress pool ", poolName, " not created yet!");
+    }
+    return poolIter->second.get();
+  }
 }
 
 void SaiBufferManager::updateEgressBufferPoolStats() {
-  if (!egressBufferPoolHandle_) {
+  if (!egressBufferPoolHandle_.size()) {
     // Applies to platforms with SHARED_INGRESS_EGRESS_BUFFER_POOL, where
     // watermarks are polled as part of ingress itself.
     return;
   }
-  egressBufferPoolHandle_->bufferPool->updateStats();
-  auto counters = egressBufferPoolHandle_->bufferPool->getStats();
-  deviceWatermarkBytes_ = counters[SAI_BUFFER_POOL_STAT_WATERMARK_BYTES];
+  // As of now, we just need to be exporting the buffer pool stats for
+  // default pool, will expose the buffer pool stats for non-default if
+  // needed in future.
+  auto poolIter = egressBufferPoolHandle_.find(kDefaultEgressBufferPoolName);
+  if (poolIter != egressBufferPoolHandle_.end()) {
+    poolIter->second->bufferPool->updateStats();
+    auto counters = poolIter->second->bufferPool->getStats();
+    deviceWatermarkBytes_ = counters[SAI_BUFFER_POOL_STAT_WATERMARK_BYTES];
+  }
 }
 
 void SaiBufferManager::updateIngressBufferPoolStats() {
@@ -350,18 +408,14 @@ SaiBufferManager::supportedIngressPriorityGroupWatermarkStats() const {
       stats.end(),
       SaiIngressPriorityGroupTraits::CounterIdsToReadAndClear.begin(),
       SaiIngressPriorityGroupTraits::CounterIdsToReadAndClear.end());
-  // TODO: Only DNX supports watermarks as of now, this would need
-  // modifications once XGS side support is in place.
-  if ((platform_->getAsic()->getAsicType() ==
-           cfg::AsicType::ASIC_TYPE_JERICHO2 ||
-       platform_->getAsic()->getAsicType() ==
-           cfg::AsicType::ASIC_TYPE_JERICHO3) &&
-      std::find(
-          stats.begin(),
-          stats.end(),
-          SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES) ==
-          stats.end()) {
+  if (platform_->getAsic()->isSupported(
+          HwAsic::Feature::INGRESS_PRIORITY_GROUP_SHARED_WATERMARK)) {
     stats.emplace_back(SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES);
+  }
+  if (platform_->getAsic()->isSupported(
+          HwAsic::Feature::INGRESS_PRIORITY_GROUP_HEADROOM_WATERMARK)) {
+    stats.emplace_back(
+        SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES);
   }
   return stats;
 }
@@ -438,7 +492,7 @@ void SaiBufferManager::updateIngressPriorityGroupStats(
 SaiBufferProfileTraits::CreateAttributes SaiBufferManager::profileCreateAttrs(
     const PortQueue& queue) const {
   SaiBufferProfileTraits::Attributes::PoolId pool{
-      getEgressBufferPoolHandle()->bufferPool->adapterKey()};
+      getEgressBufferPoolHandle(queue)->bufferPool->adapterKey()};
   std::optional<SaiBufferProfileTraits::Attributes::ReservedBytes>
       reservedBytes;
   if (queue.getReservedBytes()) {
@@ -471,24 +525,26 @@ SaiBufferProfileTraits::CreateAttributes SaiBufferManager::profileCreateAttrs(
 }
 
 void SaiBufferManager::setupBufferPool(
-    const std::optional<std::string>& bufferPoolName,
-    const std::optional<state::BufferPoolFields>& bufferPoolCfg) {
+    const state::PortPgFields& portPgConfig) {
+  if (!portPgConfig.bufferPoolName().has_value() ||
+      !portPgConfig.bufferPoolConfig().has_value()) {
+    throw FbossError(
+        "Ingress buffer pool config should have pool name and config specified!");
+  }
   if (platform_->getAsic()->isSupported(
           HwAsic::Feature::SHARED_INGRESS_EGRESS_BUFFER_POOL)) {
-    setupIngressEgressBufferPool(bufferPoolName, bufferPoolCfg);
+    setupIngressEgressBufferPool(
+        *portPgConfig.bufferPoolName(), *portPgConfig.bufferPoolConfig());
   } else {
     // Call ingress or egress buffer pool based on the cfg passed in!
-    if (bufferPoolCfg) {
-      setupIngressBufferPool(*bufferPoolName, *bufferPoolCfg);
-    } else {
-      setupEgressBufferPool();
-    }
+    setupIngressBufferPool(
+        *portPgConfig.bufferPoolName(), *portPgConfig.bufferPoolConfig());
   }
 }
 
 std::shared_ptr<SaiBufferProfile> SaiBufferManager::getOrCreateProfile(
     const PortQueue& queue) {
-  setupBufferPool();
+  setupBufferPool(queue);
   // TODO throw error if shared bytes is set. We don't handle that in SAI
   auto attributes = profileCreateAttrs(queue);
   auto& store = saiStore_->get<SaiBufferProfileTraits>();
@@ -546,40 +602,13 @@ std::shared_ptr<SaiBufferProfile> SaiBufferManager::getOrCreateIngressProfile(
   if (!portPgConfig.bufferPoolConfig()) {
     XLOG(FATAL) << "Empty buffer pool config from portPgConfig.";
   }
-  setupBufferPool(
-      *portPgConfig.bufferPoolName(), *portPgConfig.bufferPoolConfig());
+  setupBufferPool(portPgConfig);
   auto attributes = ingressProfileCreateAttrs(portPgConfig);
   auto& store = saiStore_->get<SaiBufferProfileTraits>();
   SaiBufferProfileTraits::AdapterHostKey k = tupleProjection<
       SaiBufferProfileTraits::CreateAttributes,
       SaiBufferProfileTraits::AdapterHostKey>(attributes);
   return store.setObject(k, attributes);
-}
-
-void SaiBufferManager::createIngressBufferPool(
-    const std::shared_ptr<Port> port) {
-  /*
-   * We expect to create a single ingress buffer pool and there
-   * are checks in place to ensure more than 1 buffer pool is
-   * not configured. Although there are multiple possible port
-   * PG configs, all of it can point only to the same buffer
-   * pool config, hence we need to just process a single
-   * port PG config.
-   * Buffer configuration change would fall under disruptive
-   * config change and hence is not expected to happen as part
-   * of warm boot, hence we dont need to handle update case for
-   * buffer pool config as well.
-   */
-  if (!ingressBufferPoolHandle_) {
-    const auto& portPgCfgs = port->getPortPgConfigs();
-    if (portPgCfgs) {
-      const auto& portPgCfg = (*portPgCfgs).at(0);
-      // THRIFT_COPY
-      setupBufferPool(
-          portPgCfg->cref<switch_state_tags::bufferPoolName>()->toThrift(),
-          portPgCfg->cref<switch_state_tags::bufferPoolConfig>()->toThrift());
-    }
-  }
 }
 
 void SaiBufferManager::setIngressPriorityGroupBufferProfile(

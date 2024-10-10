@@ -885,7 +885,6 @@ void SaiPortManager::programPfcBuffers(const std::shared_ptr<Port>& swPort) {
   if (!platform_->getAsic()->isSupported(HwAsic::Feature::BUFFER_POOL)) {
     return;
   }
-  managerTable_->bufferManager().createIngressBufferPool(swPort);
   SaiPortHandle* portHandle = getPortHandle(swPort->getID());
   const auto& portPgCfgs = swPort->getPortPgConfigs();
   if (portPgCfgs) {
@@ -1006,7 +1005,12 @@ PortSaiId SaiPortManager::addPort(const std::shared_ptr<Port>& swPort) {
     // In future, if we need to support multiple global recycle ports, we would
     // need to invent some way to determiine which of the recycle ports
     // corresponds to the CPU port.
-    CHECK(!managerTable_->switchManager().getCpuRecyclePort().has_value());
+    // Assert that the recycle port we are setting is either the same or unset
+    // from before. During rollback, we do set recycle port again, but it should
+    // have the same value
+    CHECK_EQ(
+        managerTable_->switchManager().getCpuRecyclePort().value_or(portSaiId),
+        portSaiId);
     managerTable_->switchManager().setCpuRecyclePort(portSaiId);
   }
 
@@ -1781,12 +1785,6 @@ void SaiPortManager::updateStats(
     return;
   }
   auto portType = getPortType(portId);
-  if (portType == cfg::PortType::EVENTOR_PORT) {
-    // (TODO): Get port stats fails on eventor port and
-    // hence skipping it for now. Following up in
-    // CS00012349052.
-    return;
-  }
   auto now = duration_cast<seconds>(system_clock::now().time_since_epoch());
   auto* handle = handlesItr->second.get();
   auto portStatItr = portStats_.find(portId);
@@ -1897,14 +1895,33 @@ void SaiPortManager::updateStats(
     if (isUp(portId) && !curPortStats.cableLengthMeters().has_value()) {
       std::optional<SaiPortTraits::Attributes::CablePropogationDelayNS> attrT =
           SaiPortTraits::Attributes::CablePropogationDelayNS{};
-      auto cablePropogationDelayNS =
-          SaiApiTable::getInstance()->portApi().getAttribute(
-              handle->port->adapterKey(), attrT);
-      CHECK(cablePropogationDelayNS.has_value());
-      if (*cablePropogationDelayNS != std::numeric_limits<uint32_t>::max()) {
+
+      std::optional<uint32_t> cablePropogationDelayNS;
+      try {
+        cablePropogationDelayNS =
+            *SaiApiTable::getInstance()->portApi().getAttribute(
+                handle->port->adapterKey(), attrT);
+      } catch (const SaiApiError& e) {
+        // On FE13 role cable len is supported only on FE2
+        // facing ports. So we allow for SAI_STATUS_INVALID_PORT
+        // error
+        if (e.getSaiStatus() != SAI_STATUS_INVALID_PORT_NUMBER) {
+          throw;
+        }
+        cablePropogationDelayNS = std::numeric_limits<uint32_t>::max();
+      }
+      if (cablePropogationDelayNS.has_value() &&
+          *cablePropogationDelayNS != std::numeric_limits<uint32_t>::max()) {
         // In fiber it takes about 5ns for light to travel 1 meter
         curPortStats.cableLengthMeters() =
             std::ceil(*cablePropogationDelayNS / 5.0);
+      } else if (cablePropogationDelayNS.has_value()) {
+        // Assign null or int_max value to cable length.
+        // In case of invalid port (FE13->FAP facing ports)
+        // we will set cableLengthMeters to int_max.  So then
+        // next time around, we don't need to collect this
+        // expensive stat.
+        curPortStats.cableLengthMeters() = *cablePropogationDelayNS;
       }
     }
   }

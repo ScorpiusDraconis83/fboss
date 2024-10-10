@@ -48,12 +48,13 @@ struct SaiBufferPoolTraits {
         SaiIntDefault<sai_uint64_t>>;
   };
   using AdapterKey = BufferPoolSaiId;
-  using AdapterHostKey = Attributes::Type;
   using CreateAttributes = std::tuple<
       Attributes::Type,
       Attributes::Size,
       Attributes::ThresholdMode,
       std::optional<Attributes::XoffSize>>;
+  using AdapterHostKey =
+      std::tuple<Attributes::Type, Attributes::Size, Attributes::ThresholdMode>;
 
   static constexpr std::array<sai_stat_id_t, 1> CounterIdsToReadAndClear = {
       SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
@@ -162,10 +163,7 @@ struct SaiIngressPriorityGroupTraits {
    * as clearOnRead counters. This is addressed for DNX via CS00012282384,
    * however, still open for rest of the SAI platforms.
    */
-  static constexpr std::array<sai_stat_id_t, 0> CounterIdsToReadAndClear = {
-      // SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES,
-      // SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES,
-  };
+  static constexpr std::array<sai_stat_id_t, 0> CounterIdsToReadAndClear = {};
   static constexpr std::array<sai_stat_id_t, 0> CounterIdsToRead = {};
 };
 

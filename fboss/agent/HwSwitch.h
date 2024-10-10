@@ -256,6 +256,7 @@ class HwSwitch {
   virtual HwFlowletStats getHwFlowletStats() const = 0;
   virtual std::vector<EcmpDetails> getAllEcmpDetails() const = 0;
   virtual HwSwitchWatermarkStats getSwitchWatermarkStats() const = 0;
+  virtual HwResourceStats getResourceStats() const = 0;
 
   /*
    * Get latest device watermark bytes
@@ -385,6 +386,8 @@ class HwSwitch {
   virtual AclStats getAclStats() const = 0;
 
   virtual std::shared_ptr<SwitchState> reconstructSwitchState() const = 0;
+
+  virtual void injectSwitchReachabilityChangeNotification() = 0;
 
  protected:
   void setProgrammedState(const std::shared_ptr<SwitchState>& state);

@@ -7,7 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <fboss/thrift_cow/visitors/RecurseVisitor.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include "fboss/thrift_cow/nodes/Types.h"
 #include "fboss/thrift_cow/nodes/tests/gen-cpp2/test_fatal_types.h"
 
@@ -36,12 +36,16 @@ folly::dynamic createTestDynamic() {
       "mapOfStringToStruct", dynamic::object())("setOfEnum", dynamic::array())(
       "setOfI32", dynamic::array())("setOfString", dynamic::array())(
       "unsigned_int64", 123)("mapA", dynamic::object())(
-      "mapB", dynamic::object());
+      "mapB", dynamic::object())("cowMap", dynamic::object())(
+      "hybridMap", dynamic::object())("hybridList", dynamic::array())(
+      "hybridSet", dynamic::array())("hybridUnion", dynamic::object())(
+      "hybridStruct", dynamic::object("childMap", dynamic::object()))(
+      "hybridMapOfI32ToStruct", dynamic::object());
 }
 
 TestStruct createTestStruct(folly::dynamic testDyn) {
-  return apache::thrift::from_dynamic<TestStruct>(
-      std::move(testDyn), apache::thrift::dynamic_format::JSON_1);
+  return facebook::thrift::from_dynamic<TestStruct>(
+      std::move(testDyn), facebook::thrift::dynamic_format::JSON_1);
 }
 
 } // namespace
@@ -62,6 +66,14 @@ TEST(RecurseVisitorTests, TestFullRecurse) {
 
   std::map<std::vector<std::string>, folly::dynamic> expected = {
       {{}, testDyn},
+      {{"cowMap"}, dynamic::object()},
+      {{"hybridMap"}, dynamic::object()},
+      {{"hybridMapOfI32ToStruct"}, dynamic::object()},
+      {{"hybridList"}, dynamic::array()},
+      {{"hybridSet"}, dynamic::array()},
+      {{"hybridUnion"}, dynamic::object()},
+      {{"hybridStruct"}, testDyn["hybridStruct"]},
+      {{"hybridStruct", "childMap"}, testDyn["hybridStruct"]["childMap"]},
       {{"inlineBool"}, testDyn["inlineBool"]},
       {{"inlineInt"}, testDyn["inlineInt"]},
       {{"inlineString"}, testDyn["inlineString"]},

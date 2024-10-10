@@ -6,12 +6,15 @@
 
 #include <fboss/thrift_cow/visitors/VisitorUtils.h>
 #include <re2/re2.h>
+#include <thrift/lib/cpp/util/EnumUtils.h>
 #include <thrift/lib/cpp2/Thrift.h>
 #include <thrift/lib/cpp2/TypeClass.h>
 #include <thrift/lib/cpp2/reflection/reflection.h>
 #include "fboss/fsdb/if/gen-cpp2/fsdb_oper_types.h"
 
 namespace facebook::fboss::thrift_cow {
+
+struct HybridNodeType;
 
 /*
  * This visitor takes a path object and a thrift type and is able to
@@ -38,20 +41,16 @@ namespace epv_detail {
 
 using ExtPathIter = typename std::vector<fsdb::OperPathElem>::const_iterator;
 
-template <
-    typename TC,
-    typename Node,
-    typename Func,
-    // only enable for Node types
-    std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-        true>
+template <typename TC, typename Node, typename Func>
 void visitNode(
     std::vector<std::string>& path,
     Node& node,
     ExtPathIter begin,
     ExtPathIter end,
     const ExtPathVisitorOptions& options,
-    Func&& f) {
+    Func&& f)
+  requires(std::is_same_v<typename Node::CowType, NodeType>)
+{
   if (begin == end) {
     f(path, node);
     return;
@@ -89,7 +88,7 @@ std::optional<std::string> matchingEnumToken(
     const Enum& e,
     const fsdb::OperPathElem& elem) {
   // TODO: should we allow regex/raw matching by int value?
-  auto enumName = fatal::enum_traits<Enum>::to_string(e);
+  auto enumName = apache::thrift::util::enumName(e);
   if (matchesStrToken(enumName, elem)) {
     return enumName;
   }
@@ -133,37 +132,43 @@ template <typename ValueTypeClass>
 struct ExtendedPathVisitor<apache::thrift::type_class::set<ValueTypeClass>> {
   using TC = apache::thrift::type_class::set<ValueTypeClass>;
 
-  template <
-      typename Node,
-      typename Func,
-      // only enable for Node types
-      std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-          true>
+  template <typename Node, typename Func>
   static inline void visit(
       std::vector<std::string>& path,
       Node& node,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, NodeType>)
+  {
     epv_detail::visitNode<TC>(
         path, node, begin, end, options, std::forward<Func>(f));
   }
 
-  template <
-      typename Fields,
-      typename Func,
-      // only enable for Fields types
-      std::enable_if_t<
-          std::is_same_v<typename Fields::CowType, FieldsType>,
-          bool> = true>
+  template <typename Node, typename Func>
+  static void visit(
+      std::vector<std::string>& path,
+      Node& node,
+      epv_detail::ExtPathIter begin,
+      epv_detail::ExtPathIter end,
+      const ExtPathVisitorOptions& options,
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, HybridNodeType>)
+  {
+    // TODO: implement specialization for HybridNode
+  }
+
+  template <typename Fields, typename Func>
   static void visit(
       std::vector<std::string>& path,
       Fields& fields,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Fields::CowType, FieldsType>)
+  {
     const auto& elem = *begin++;
 
     for (auto& val : fields) {
@@ -186,37 +191,43 @@ template <typename ValueTypeClass>
 struct ExtendedPathVisitor<apache::thrift::type_class::list<ValueTypeClass>> {
   using TC = apache::thrift::type_class::list<ValueTypeClass>;
 
-  template <
-      typename Node,
-      typename Func,
-      // only enable for Node types
-      std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-          true>
+  template <typename Node, typename Func>
   static inline void visit(
       std::vector<std::string>& path,
       Node& node,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, NodeType>)
+  {
     epv_detail::visitNode<TC>(
         path, node, begin, end, options, std::forward<Func>(f));
   }
 
-  template <
-      typename Fields,
-      typename Func,
-      // only enable for Fields types
-      std::enable_if_t<
-          std::is_same_v<typename Fields::CowType, FieldsType>,
-          bool> = true>
+  template <typename Node, typename Func>
+  static void visit(
+      std::vector<std::string>& path,
+      Node& node,
+      epv_detail::ExtPathIter begin,
+      epv_detail::ExtPathIter end,
+      const ExtPathVisitorOptions& options,
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, HybridNodeType>)
+  {
+    // TODO: implement specialization for HybridNode
+  }
+
+  template <typename Fields, typename Func>
   static void visit(
       std::vector<std::string>& path,
       Fields& fields,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Fields::CowType, FieldsType>)
+  {
     const auto& elem = *begin++;
     for (int i = 0; i < fields.size(); ++i) {
       auto matching =
@@ -246,37 +257,43 @@ struct ExtendedPathVisitor<
     apache::thrift::type_class::map<KeyTypeClass, MappedTypeClass>> {
   using TC = apache::thrift::type_class::map<KeyTypeClass, MappedTypeClass>;
 
-  template <
-      typename Node,
-      typename Func,
-      // only enable for Node types
-      std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-          true>
+  template <typename Node, typename Func>
   static inline void visit(
       std::vector<std::string>& path,
       Node& node,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, NodeType>)
+  {
     epv_detail::visitNode<TC>(
         path, node, begin, end, options, std::forward<Func>(f));
   }
 
-  template <
-      typename Fields,
-      typename Func,
-      // only enable for Fields types
-      std::enable_if_t<
-          std::is_same_v<typename Fields::CowType, FieldsType>,
-          bool> = true>
+  template <typename Node, typename Func>
+  static void visit(
+      std::vector<std::string>& path,
+      Node& node,
+      epv_detail::ExtPathIter begin,
+      epv_detail::ExtPathIter end,
+      const ExtPathVisitorOptions& options,
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, HybridNodeType>)
+  {
+    // TODO: implement specialization for HybridNode
+  }
+
+  template <typename Fields, typename Func>
   static void visit(
       std::vector<std::string>& path,
       Fields& fields,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Fields::CowType, FieldsType>)
+  {
     const auto& elem = *begin++;
     for (auto& [key, val] : fields) {
       auto matching = epv_detail::matchingToken<KeyTypeClass>(key, elem);
@@ -307,37 +324,43 @@ template <>
 struct ExtendedPathVisitor<apache::thrift::type_class::variant> {
   using TC = apache::thrift::type_class::variant;
 
-  template <
-      typename Node,
-      typename Func,
-      // only enable for Node types
-      std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-          true>
+  template <typename Node, typename Func>
   static inline void visit(
       std::vector<std::string>& path,
       Node& node,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, NodeType>)
+  {
     epv_detail::visitNode<TC>(
         path, node, begin, end, options, std::forward<Func>(f));
   }
 
-  template <
-      typename Fields,
-      typename Func,
-      // only enable for Fields types
-      std::enable_if_t<
-          std::is_same_v<typename Fields::CowType, FieldsType>,
-          bool> = true>
+  template <typename Node, typename Func>
+  static void visit(
+      std::vector<std::string>& path,
+      Node& node,
+      epv_detail::ExtPathIter begin,
+      epv_detail::ExtPathIter end,
+      const ExtPathVisitorOptions& options,
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, HybridNodeType>)
+  {
+    // TODO: implement specialization for HybridNode
+  }
+
+  template <typename Fields, typename Func>
   static void visit(
       std::vector<std::string>& path,
       Fields& fields,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Fields::CowType, FieldsType>)
+  {
     const auto& elem = *begin++;
     auto raw = elem.raw_ref();
     if (!raw) {
@@ -387,53 +410,56 @@ template <>
 struct ExtendedPathVisitor<apache::thrift::type_class::structure> {
   using TC = apache::thrift::type_class::structure;
 
-  template <
-      typename Node,
-      typename Func,
-      // only enable for Node types
-      std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-          true>
+  template <typename Node, typename Func>
   static inline void visit(
       Node& node,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, NodeType>)
+  {
     std::vector<std::string> path;
     visit(path, node, begin, end, options, std::forward<Func>(f));
   }
 
-  template <
-      typename Node,
-      typename Func,
-      // only enable for Node types
-      std::enable_if_t<std::is_same_v<typename Node::CowType, NodeType>, bool> =
-          true>
+  template <typename Node, typename Func>
   static inline void visit(
       std::vector<std::string>& path,
       Node& node,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, NodeType>)
+  {
     epv_detail::visitNode<TC>(
         path, node, begin, end, options, std::forward<Func>(f));
   }
 
-  template <
-      typename Fields,
-      typename Func,
-      // only enable for Fields types
-      std::enable_if_t<
-          std::is_same_v<typename Fields::CowType, FieldsType>,
-          bool> = true>
+  template <typename Node, typename Func>
+  static void visit(
+      std::vector<std::string>& path,
+      Node& node,
+      epv_detail::ExtPathIter begin,
+      epv_detail::ExtPathIter end,
+      const ExtPathVisitorOptions& options,
+      Func&& f)
+    requires(std::is_same_v<typename Node::CowType, HybridNodeType>)
+  {
+    // TODO: implement specialization for HybridNode
+  }
+
+  template <typename Fields, typename Func>
   static void visit(
       std::vector<std::string>& path,
       Fields& fields,
       epv_detail::ExtPathIter begin,
       epv_detail::ExtPathIter end,
       const ExtPathVisitorOptions& options,
-      Func&& f) {
+      Func&& f)
+    requires(std::is_same_v<typename Fields::CowType, FieldsType>)
+  {
     using Members = typename Fields::Members;
 
     const auto& elem = *begin++;

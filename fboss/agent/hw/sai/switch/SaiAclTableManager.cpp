@@ -177,6 +177,7 @@ bool SaiAclTableManager::needsAclTableRecreate(
   if (oldAclTable->getActionTypes() != newAclTable->getActionTypes() ||
       oldAclTable->getPriority() != newAclTable->getPriority() ||
       oldAclTable->getQualifiers() != newAclTable->getQualifiers()) {
+    XLOG(DBG2) << "Recreating ACL table";
     return true;
   }
   return false;
@@ -274,6 +275,10 @@ sai_acl_ip_type_t SaiAclTableManager::cfgIpTypeToSaiIpType(
       return SAI_ACL_IP_TYPE_IPV4ANY;
     case cfg::IpType::IP6:
       return SAI_ACL_IP_TYPE_IPV6ANY;
+    case cfg::IpType::ARP_REQUEST:
+      return SAI_ACL_IP_TYPE_ARP_REQUEST;
+    case cfg::IpType::ARP_REPLY:
+      return SAI_ACL_IP_TYPE_ARP_REPLY;
   }
   // should return in one of the cases
   throw FbossError("Unsupported IP Type option");
@@ -288,6 +293,8 @@ uint16_t SaiAclTableManager::cfgEtherTypeToSaiEtherType(
     case cfg::EtherType::EAPOL:
     case cfg::EtherType::MACSEC:
     case cfg::EtherType::LLDP:
+    case cfg::EtherType::ARP:
+    case cfg::EtherType::LACP:
       return static_cast<uint16_t>(cfgEtherType);
   }
   // should return in one of the cases
@@ -684,8 +691,10 @@ AclEntrySaiId SaiAclTableManager::addAclEntry(
 
   bool matchV4 = !addedAclEntry->getEtherType().has_value() ||
       addedAclEntry->getEtherType().value() == cfg::EtherType::IPv4;
+#if !defined(TAJO_SDK) && !defined(BRCM_SAI_SDK_XGS)
   bool matchV6 = !addedAclEntry->getEtherType().has_value() ||
       addedAclEntry->getEtherType().value() == cfg::EtherType::IPv6;
+#endif
   std::optional<SaiAclEntryTraits::Attributes::FieldIpProtocol> fieldIpProtocol{
       std::nullopt};
   auto qualifierSet = getSupportedQualifierSet();
@@ -1466,6 +1475,11 @@ std::set<cfg::AclTableQualifier> SaiAclTableManager::getSupportedQualifierSet()
         cfg::AclTableQualifier::LOOKUP_CLASS_ROUTE,
         cfg::AclTableQualifier::L4_SRC_PORT,
         cfg::AclTableQualifier::L4_DST_PORT,
+        cfg::AclTableQualifier::ICMPV4_TYPE,
+        cfg::AclTableQualifier::ICMPV4_CODE,
+        cfg::AclTableQualifier::ICMPV6_TYPE,
+        cfg::AclTableQualifier::ICMPV6_CODE,
+        cfg::AclTableQualifier::DST_MAC,
         cfg::AclTableQualifier::BTH_OPCODE};
     return jericho3Qualifiers;
   } else {

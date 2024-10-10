@@ -254,6 +254,35 @@ void FabricConnectivityManager::addDsfNode(
     const std::shared_ptr<DsfNode>& dsfNode) {
   switchIdToDsfNode_[dsfNode->getID()] = dsfNode;
   switchNameToSwitchIDs_[dsfNode->getName()].insert(dsfNode->getSwitchId());
+
+  // DSFNodeMap for multi-core devices is spaced out by the number of cores.
+  // However, SAI implementation may return peer switchId for any core.
+  // Construct a map to process it.
+  //
+  // For example, for a 2-core, 2-NPU device, DSFNodeMap contains:
+  //  1024 => fdsw1
+  //  1026 => fdsw1
+  //  1028 => fdsw2
+  //  1030 => fdsw2
+  //  ...
+  //
+  //  Build a map as:
+  //  1024 => 1024, fdsw1
+  //  1025 => 1024, fdsw1
+  //  1026 => 1026, fdsw1
+  //  1027 => 1026, fdsw1
+  //  1028 => 1028, fdsw2
+  //  1029 => 1028, fdsw2
+  //  ...
+  auto baseSwitchId = dsfNode->getID();
+  const auto& hwAsic =
+      getHwAsicForAsicType(switchIdToDsfNode_[baseSwitchId]->getAsicType());
+  for (auto currSwitchId = baseSwitchId;
+       currSwitchId < baseSwitchId + hwAsic.getNumCores();
+       currSwitchId++) {
+    switchIdToBaseSwitchIdAndSwitchName_[currSwitchId] =
+        std::make_pair(baseSwitchId, dsfNode->getName());
+  }
 }
 
 void FabricConnectivityManager::removeDsfNode(
@@ -305,6 +334,62 @@ void FabricConnectivityManager::stateUpdated(const StateDelta& delta) {
   updateDsfNodes(delta);
 }
 
+std::optional<PortID> FabricConnectivityManager::getActualPortIdForSwitch(
+    int32_t portId,
+    uint64_t switchId,
+    uint64_t baseSwitchId,
+    const auto& switchName) {
+  auto switchNameIter = switchNameToSwitchIDs_.find(switchName);
+  if (switchNameIter == switchNameToSwitchIDs_.end()) {
+    return std::nullopt;
+  }
+
+  auto iter = switchNameIter->second.find(baseSwitchId);
+  if (iter == switchNameIter->second.end()) {
+    return std::nullopt;
+  }
+
+  auto npuIndex = std::distance(switchNameIter->second.begin(), iter);
+  const auto& hwAsic =
+      getHwAsicForAsicType(switchIdToDsfNode_[baseSwitchId]->getAsicType());
+
+  return PortID(
+      portId + npuIndex * hwAsic.getMaxPorts() +
+      ((switchId - baseSwitchId) *
+       getFabricPortsPerVirtualDevice(
+           switchIdToDsfNode_[baseSwitchId]->getAsicType())) +
+      getRemotePortOffset(switchIdToDsfNode_[baseSwitchId]->getPlatformType()));
+}
+
+std::pair<std::optional<std::string>, std::optional<std::string>>
+FabricConnectivityManager::getActualSwitchNameAndPortName(
+    uint64_t switchId,
+    int32_t portId) {
+  std::optional<std::string> switchName{std::nullopt}, portName{std::nullopt};
+
+  auto switchIdIter = switchIdToBaseSwitchIdAndSwitchName_.find(switchId);
+  if (switchIdIter == switchIdToBaseSwitchIdAndSwitchName_.end()) {
+    XLOG(ERR) << "Unknown Peer SwitchID: " << static_cast<int>(switchId);
+  } else {
+    SwitchID baseSwitchId;
+
+    std::tie(baseSwitchId, switchName) = switchIdIter->second;
+
+    auto actualPortId = getActualPortIdForSwitch(
+        PortID(portId), SwitchID(switchId), baseSwitchId, switchName.value());
+    if (actualPortId.has_value()) {
+      const auto platformMapping = getPlatformMappingForDsfNode(
+          switchIdToDsfNode_[baseSwitchId]->getPlatformType());
+      if (!platformMapping) {
+        throw FbossError("Unable to find platform mapping for port: ", portId);
+      }
+      portName = platformMapping->getPortNameByPortId(actualPortId.value());
+    }
+  }
+
+  return std::make_pair(switchName, portName);
+}
+
 std::optional<multiswitch::FabricConnectivityDelta>
 FabricConnectivityManager::processConnectivityInfoForPort(
     const PortID& portId,
@@ -328,14 +413,30 @@ FabricConnectivityManager::processConnectivityInfoForPort(
 
     if (iter->second.expectedSwitchId().has_value() &&
         iter->second.expectedSwitchId().value() == iter->second.switchId() &&
-        iter->second.expectedSwitchName().has_value()) {
-      iter->second.switchName() = iter->second.expectedSwitchName().value();
-    }
-
-    if (iter->second.expectedPortId().has_value() &&
+        iter->second.expectedSwitchName().has_value() &&
+        iter->second.expectedPortId().has_value() &&
         iter->second.expectedPortId().value() == iter->second.portId() &&
         iter->second.expectedPortName().has_value()) {
+      // actual{switchID, portID} == expected{switchID, portID}
+      iter->second.switchName() = iter->second.expectedSwitchName().value();
       iter->second.portName() = iter->second.expectedPortName().value();
+    } else {
+      // Miscabling:
+      //    - Connected to expected Switch but on wrong port
+      //    - Connected to non-expected Switch
+      // Expected switchName/portName are not set
+      //
+      // For any of these scenarios, derive SwitchName, PortName
+      // from actual{switchID, portID}.
+      auto [switchName, portName] = getActualSwitchNameAndPortName(
+          *iter->second.switchId(), *iter->second.portId());
+
+      if (switchName.has_value()) {
+        iter->second.switchName() = switchName.value();
+      }
+      if (portName.has_value()) {
+        iter->second.portName() = portName.value();
+      }
     }
   } else {
     iter = currentNeighborConnectivity_.insert({portId, hwEndpoint}).first;

@@ -8,7 +8,7 @@
 #include <fboss/thrift_cow/storage/CowStorage.h>
 #include <fboss/thrift_cow/visitors/PatchBuilder.h>
 #include <fboss/thrift_cow/visitors/RecurseVisitor.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include "fboss/fsdb/oper/ExtendedPathBuilder.h"
 #include "fboss/fsdb/tests/gen-cpp2-thriftpath/thriftpath_test.h" // @manual=//fboss/fsdb/tests:thriftpath_test_thrift-cpp2-thriftpath
 #include "fboss/fsdb/tests/gen-cpp2/thriftpath_test_fatal_types.h"
@@ -33,8 +33,8 @@ dynamic createTestDynamic() {
 
 TestStruct createTestStruct() {
   auto testDyn = createTestDynamic();
-  return apache::thrift::from_dynamic<TestStruct>(
-      testDyn, apache::thrift::dynamic_format::JSON_1);
+  return facebook::thrift::from_dynamic<TestStruct>(
+      testDyn, facebook::thrift::dynamic_format::JSON_1);
 }
 
 TestStruct createTestStructForExtendedTests() {
@@ -45,8 +45,8 @@ TestStruct createTestStructForExtendedTests() {
     testDyn["setOfI32"].push_back(i);
   }
 
-  return apache::thrift::from_dynamic<TestStruct>(
-      testDyn, apache::thrift::dynamic_format::JSON_1);
+  return facebook::thrift::from_dynamic<TestStruct>(
+      testDyn, facebook::thrift::dynamic_format::JSON_1);
 }
 
 template <typename T, typename = void>
@@ -72,6 +72,12 @@ void publishAllNodes(CowStorage<Root>& storage) {
   storage.publish();
 }
 
+OperDeltaUnit createEmptyDeltaUnit(std::vector<std::string> path) {
+  OperDeltaUnit unit;
+  unit.path()->raw() = std::move(path);
+  return unit;
+}
+
 } // namespace
 
 TEST(CowStorageTests, GetThrift) {
@@ -79,8 +85,8 @@ TEST(CowStorageTests, GetThrift) {
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
   auto storage = CowStorage<TestStruct>(testStruct);
 
   EXPECT_EQ(storage.get(root.tx()).value(), true);
@@ -96,8 +102,8 @@ TEST(CowStorageTests, GetEncoded) {
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
   auto storage = CowStorage<TestStruct>(testStruct);
 
   auto result = storage.get_encoded(root.tx(), OperProtocol::SIMPLE_JSON);
@@ -137,8 +143,8 @@ TEST(CowStorageTests, GetEncodedMetadata) {
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
   auto storage = CowStorage<TestStruct>(testStruct);
 
   auto result = storage.get_encoded(root.tx(), OperProtocol::SIMPLE_JSON);
@@ -183,8 +189,8 @@ TEST(CowStorageTests, SetThrift) {
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
   auto storage = CowStorage<TestStruct>(testStruct);
 
   EXPECT_EQ(storage.get(root.tx()).value(), true);
@@ -212,52 +218,13 @@ TEST(CowStorageTests, SetThrift) {
   EXPECT_EQ(storage.get(root.structMap()[3]).value(), newStructMapMember);
 }
 
-TEST(CowStorageTests, AddThrift) {
-  using namespace facebook::fboss::fsdb;
-
-  thriftpath::RootThriftPath<TestStruct> root;
-
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
-  auto storage = CowStorage<TestStruct>(testStruct);
-
-  EXPECT_EQ(storage.get(root.tx()).value(), true);
-  EXPECT_EQ(storage.get(root.rx()).value(), false);
-  EXPECT_EQ(storage.get(root.member()).value(), testStruct.member().value());
-  EXPECT_EQ(
-      storage.get(root.structMap()[3]).value(), testStruct.structMap()->at(3));
-
-  TestStructSimple member1;
-  member1.min() = 500;
-  member1.max() = 5000;
-  TestStructSimple member2;
-  member2.min() = 300;
-  member2.max() = 3000;
-
-  // add values
-  EXPECT_EQ(storage.add(root.structMap()[1], member1), std::nullopt);
-  EXPECT_EQ(storage.add(root.structMap()[2], member2), std::nullopt);
-  // EXPECT_EQ(storage.add(root.structList()[-1], member1), std::nullopt);
-  EXPECT_EQ(storage.add(root.structList()[0], member2), std::nullopt);
-  EXPECT_EQ(
-      storage.add(root.enumMap()[TestEnum::FIRST], member2), std::nullopt);
-
-  EXPECT_EQ(storage.get(root.structMap()[1]).value(), member1);
-  EXPECT_EQ(storage.get(root.structMap()[2]).value(), member2);
-  EXPECT_EQ(storage.get(root.structList()[0]).value(), member2);
-  EXPECT_EQ(storage.get(root.enumMap()[TestEnum::FIRST]).value(), member2);
-
-  std::vector<std::string> testPath = {"enumMap", "FIRST"};
-  EXPECT_EQ(storage.template get<TestStructSimple>(testPath).value(), member2);
-}
-
 TEST(CowStorageTests, AddDynamic) {
   using namespace facebook::fboss::fsdb;
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
   auto storage = CowStorage<TestStruct>(testStruct);
 
   EXPECT_EQ(storage.get(root.tx()).value(), true);
@@ -272,15 +239,8 @@ TEST(CowStorageTests, RemoveThrift) {
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
-  auto storage = CowStorage<TestStruct>(testStruct);
-
-  EXPECT_EQ(storage.get(root.tx()).value(), true);
-  EXPECT_EQ(storage.get(root.rx()).value(), false);
-  EXPECT_EQ(storage.get(root.member()).value(), testStruct.member().value());
-  EXPECT_EQ(
-      storage.get(root.structMap()[3]).value(), testStruct.structMap()->at(3));
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
 
   TestStructSimple member1;
   member1.min() = 500;
@@ -289,12 +249,17 @@ TEST(CowStorageTests, RemoveThrift) {
   member2.min() = 300;
   member2.max() = 3000;
 
-  // add values
-  EXPECT_EQ(storage.add(root.structMap()[1], member1), std::nullopt);
-  EXPECT_EQ(storage.add(root.structMap()[2], member2), std::nullopt);
-  EXPECT_EQ(storage.add(root.structList()[0], member2), std::nullopt);
-  EXPECT_EQ(storage.add(root.structList()[1], member1), std::nullopt);
-  EXPECT_EQ(storage.add(root.structList()[2], member1), std::nullopt);
+  (*testStruct.structMap())[1] = member1;
+  (*testStruct.structMap())[2] = member2;
+  (*testStruct.structList()) = {member2, member1, member1};
+
+  auto storage = CowStorage<TestStruct>(testStruct);
+
+  EXPECT_EQ(storage.get(root.tx()).value(), true);
+  EXPECT_EQ(storage.get(root.rx()).value(), false);
+  EXPECT_EQ(storage.get(root.member()).value(), testStruct.member().value());
+  EXPECT_EQ(
+      storage.get(root.structMap()[3]).value(), testStruct.structMap()->at(3));
 
   EXPECT_EQ(storage.get(root.structMap()[1]).value(), member1);
   EXPECT_EQ(storage.get(root.structMap()[2]).value(), member2);
@@ -329,8 +294,8 @@ TEST(CowStorageTests, PatchDelta) {
 
   thriftpath::RootThriftPath<TestStruct> root;
 
-  auto testStruct = apache::thrift::from_dynamic<TestStruct>(
-      createTestDynamic(), apache::thrift::dynamic_format::JSON_1);
+  auto testStruct = facebook::thrift::from_dynamic<TestStruct>(
+      createTestDynamic(), facebook::thrift::dynamic_format::JSON_1);
   auto storage = CowStorage<TestStruct>(testStruct);
 
   // publish to ensure we can patch published storage
@@ -722,4 +687,40 @@ TEST(SubscribableStorageTests, PatchInvalidDeltaPath) {
   unit.path()->raw() = {"inlineStruct", "invalid", "path"};
   delta.changes() = {unit};
   EXPECT_EQ(storage.patch(delta), StorageError::INVALID_PATH);
+}
+
+TEST(CowStorageTests, PatchEmptyDeltaNonexistentPath) {
+  using namespace facebook::fboss::fsdb;
+
+  thriftpath::RootThriftPath<TestStruct> root;
+
+  auto testStructA = createTestStruct();
+  auto storage = CowStorage<TestStruct>(testStructA);
+
+  EXPECT_EQ(storage.get(root.mapOfStructs())->size(), 0);
+  EXPECT_EQ(storage.get(root.listofStructs())->size(), 0);
+
+  std::vector<OperDeltaUnit> units = {
+      // patch invalid map entry
+      createEmptyDeltaUnit(root.mapOfStructs()["a"].m()["some"].tokens()),
+      createEmptyDeltaUnit(root.mapOfStructs()["b"].l()[1].tokens()),
+      createEmptyDeltaUnit(root.mapOfStructs()["b"].s()[1].tokens()),
+      createEmptyDeltaUnit(root.mapOfStructs()["c"].u().integral().tokens()),
+      createEmptyDeltaUnit(root.mapOfStructs()["d"].o().tokens()),
+      // patch invalid list entry
+      createEmptyDeltaUnit(root.listofStructs()[0].m()["some"].tokens()),
+      createEmptyDeltaUnit(root.listofStructs()[1].l()[1].tokens()),
+      createEmptyDeltaUnit(root.listofStructs()[2].s()[1].tokens()),
+      createEmptyDeltaUnit(root.listofStructs()[3].u().integral().tokens()),
+      createEmptyDeltaUnit(root.listofStructs()[4].o().tokens()),
+  };
+  for (const auto& unit : units) {
+    OperDelta delta;
+    delta.changes() = {unit};
+
+    EXPECT_EQ(storage.patch(delta), StorageError::INVALID_PATH);
+    // None of the patches should creat the intermediate nodes
+    EXPECT_EQ(storage.get(root.mapOfStructs())->size(), 0);
+    EXPECT_EQ(storage.get(root.listofStructs())->size(), 0);
+  }
 }

@@ -131,6 +131,11 @@ SaiSwitchTraits::Attributes::AttributeRestartIssuWrapper::operator()() {
   return SAI_SWITCH_ATTR_EXT_RESTART_ISSU;
 }
 
+std::optional<sai_attr_id_t>
+SaiSwitchTraits::Attributes::AttributeDelayDropCongThreshold::operator()() {
+  return std::nullopt;
+}
+
 std::optional<sai_attr_id_t> SaiSwitchTraits::Attributes::
     AttributeForceTrafficOverFabricWrapper::operator()() {
   return SAI_SWITCH_ATTR_FORCE_TRAFFIC_OVER_FABRIC;
@@ -251,4 +256,135 @@ std::optional<sai_attr_id_t>
 SaiSwitchTraits::Attributes::AttributeReachabilityGroupList::operator()() {
   return SAI_SWITCH_ATTR_REACHABILITY_GROUP_LIST;
 }
+
+std::optional<sai_attr_id_t> SaiSwitchTraits::Attributes::
+    AttributeFabricLinkLayerFlowControlThreshold::operator()() {
+  return SAI_SWITCH_ATTR_FABRIC_LLFC_THRESHOLD;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxDiffEncoderEnWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_DIFF_ENCODER_EN;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxDigGainWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_DIG_GAIN;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxFfeCoeff0Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_FFE_COEFF_0;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxFfeCoeff1Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_FFE_COEFF_1;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxFfeCoeff2Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_FFE_COEFF_2;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxFfeCoeff3Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_FFE_COEFF_3;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxFfeCoeff4Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_FFE_COEFF_4;
+}
+
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeTxDriverSwingWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_TX_DRIVER_SWING;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgBoost1StartWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_BOOST1_STRT;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgBoost1StepWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_BOOST1_STEP;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgBoost1StopWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_BOOST1_STOP;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgBoost2OrHrStartWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_BOOST2_OR_HR_STRT;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgBoost2OrHrStepWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_BOOST2_OR_HR_STEP;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgBoost2OrHrStopWrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_BOOST2_OR_HR_STOP;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgC1Start1p7Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_C1_START_1P7;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgC1Step1p7Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_C1_STEP_1P7;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgC1Stop1p7Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_C1_STOP_1P7;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgDfeStart1p7Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_DFE_START_1P7;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgDfeStep1p7Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_DFE_STEP_1P7;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgDfeStop1p7Wrapper::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_DFE_STOP_1P7;
+}
+
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxEnableScanSelectionWrapper ::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_ENABLE_SCAN;
+}
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxInstgScanUseSrSettingsWrapper ::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_INSTG_SCAN_USE_SR_SETTINGS;
+}
+std::optional<sai_attr_id_t>
+SaiPortSerdesTraits::Attributes::AttributeRxCdrCfgOvEnWrapper ::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_CDR_CFG_OV_EN;
+}
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxCdrTdet1stOrdStepOvValWrapper ::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_CDR_TDET_1ST_ORD_STEP_OV_VAL;
+}
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxCdrTdet2ndOrdStepOvValWrapper ::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_CDR_TDET_2ND_ORD_STEP_OV_VAL;
+}
+std::optional<sai_attr_id_t> SaiPortSerdesTraits::Attributes::
+    AttributeRxCdrTdetFineStepOvValWrapper ::operator()() {
+  return SAI_PORT_SERDES_ATTR_EXT_RX_CDR_TDET_FINE_STEP_OV_VAL;
+}
+
 } // namespace facebook::fboss

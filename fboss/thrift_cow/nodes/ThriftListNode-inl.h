@@ -12,7 +12,7 @@
 
 #include <fatal/container/tuple.h>
 #include <folly/json/dynamic.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include <thrift/lib/cpp2/reflection/reflection.h>
 #include "fboss/agent/state/NodeBase-defs.h"
 #include "fboss/thrift_cow/nodes/Serializer.h"
@@ -47,6 +47,8 @@ struct ThriftListFields {
   using StorageType = std::vector<value_type>;
   using iterator = typename StorageType::iterator;
   using const_iterator = typename StorageType::const_iterator;
+  using Tag = apache::thrift::type::list<
+      apache::thrift::type::infer_tag<ChildTType, true /* GuessStringTag */>>;
 
   // whether the contained type is another Cow node, or a primitive
   static constexpr bool HasChildNodes = ChildTraits::isChild::value;
@@ -56,10 +58,10 @@ struct ThriftListFields {
 
   ThriftListFields() {}
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  explicit ThriftListFields(T&& thrift) {
+  template <typename T>
+  explicit ThriftListFields(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     fromThrift(std::forward<T>(thrift));
   }
 
@@ -71,10 +73,10 @@ struct ThriftListFields {
     return thrift;
   }
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  void fromThrift(T&& thrift) {
+  template <typename T>
+  void fromThrift(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     storage_.clear();
     for (const auto& elem : thrift) {
       emplace_back(elem);
@@ -85,15 +87,15 @@ struct ThriftListFields {
 
   folly::dynamic toDynamic() const {
     folly::dynamic out;
-    apache::thrift::to_dynamic<TypeClass>(
-        out, toThrift(), apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::to_dynamic<Tag>(
+        out, toThrift(), facebook::thrift::dynamic_format::JSON_1);
     return out;
   }
 
   void fromDynamic(const folly::dynamic& value) {
     TType thrift;
-    apache::thrift::from_dynamic<TypeClass>(
-        thrift, value, apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::from_dynamic<Tag>(
+        thrift, value, facebook::thrift::dynamic_format::JSON_1);
     fromThrift(thrift);
   }
 
@@ -348,11 +350,11 @@ class ThriftListNode : public NodeBaseT<
     return this->writableFields()->remove(index);
   }
 
-  void modify(std::string token) {
-    modify(folly::to<std::size_t>(token));
+  void modify(std::string token, bool construct = true) {
+    modify(folly::to<std::size_t>(token), construct);
   }
 
-  virtual void modify(std::size_t index) {
+  virtual void modify(std::size_t index, bool construct = true) {
     DCHECK(!this->isPublished());
 
     if (index < this->size()) {
@@ -363,7 +365,7 @@ class ThriftListNode : public NodeBaseT<
           child.swap(clonedChild);
         }
       }
-    } else {
+    } else if (construct) {
       // create unpublished default constructed child if missing
       while (this->size() <= index) {
         emplace_back();

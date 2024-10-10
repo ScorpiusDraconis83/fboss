@@ -40,6 +40,13 @@ class HwTransceiverUtils {
   static void verifyTempAndVccFlags(
       std::map<std::string, TransceiverInfo>& portToTransceiverInfoMap);
 
+  static void verifyDatapathResetTimestamp(
+      const std::string& portName,
+      const TcvrState& tcvrState,
+      const TcvrStats& tcvrStats,
+      time_t timeReference,
+      bool expectedReset);
+
  private:
   static void verifyOpticsSettings(
       const TcvrState& tcvrState,
@@ -47,7 +54,8 @@ class HwTransceiverUtils {
       cfg::PortProfileID profile);
   static void verifyMediaInterfaceCompliance(
       const TcvrState& tcvrState,
-      cfg::PortProfileID profile);
+      cfg::PortProfileID profile,
+      const std::string& portName);
   static void verify10gProfile(
       const TcvrState& tcvrState,
       const TransceiverManagementInterface mgmtInterface,

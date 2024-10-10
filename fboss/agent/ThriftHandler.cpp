@@ -112,11 +112,6 @@ DEFINE_bool(
     false, // false => Prevents such mutations in prod
     "Allow mutations of running switch state by external thrift calls");
 
-DEFINE_bool(
-    skip_drain_check_for_prbs,
-    false,
-    "Skips drain check for local PRBS testing");
-
 DECLARE_bool(intf_nbr_tables);
 
 DECLARE_bool(enable_acl_table_group);
@@ -203,6 +198,7 @@ void getPortInfoHelper(
   if (auto id = sw.getHwLogicalPortId(port->getID())) {
     portInfo.hwLogicalPortId() = *id;
   }
+  *portInfo.portType() = port->getPortType();
 
   std::shared_ptr<QosPolicy> qosPolicy;
   auto state = sw.getState();
@@ -361,8 +357,14 @@ void getPortInfoHelper(
 
   *portInfo.profileID() = apache::thrift::util::enumName(port->getProfileID());
 
+  const auto pPort = sw.getPlatformMapping()->getPlatformPort(port->getID());
+  if (pPort.mapping()->attachedCoreId().has_value()) {
+    portInfo.coreId() = *pPort.mapping()->attachedCoreId();
+  }
+  if (pPort.mapping()->virtualDeviceId().has_value()) {
+    portInfo.virtualDeviceId() = *pPort.mapping()->virtualDeviceId();
+  }
   if (port->isEnabled()) {
-    const auto pPort = sw.getPlatformMapping()->getPlatformPort(port->getID());
     PortHardwareDetails hw;
     hw.profile() = port->getProfileID();
     auto matcher =
@@ -380,6 +382,17 @@ void getPortInfoHelper(
     auto fec = hw.profileConfig()->iphy()->fec().value();
     portInfo.fecEnabled() = fec != phy::FecMode::NONE;
     portInfo.fecMode() = apache::thrift::util::enumName(fec);
+
+    // Fill expected LLDP info
+    auto lldpmap = port->getLLDPValidations();
+    auto peerName = lldpmap.find(cfg::LLDPTag::SYSTEM_NAME);
+    if (peerName != lldpmap.end()) {
+      portInfo.expectedLLDPeerName() = peerName->second;
+    }
+    auto peerPort = lldpmap.find(cfg::LLDPTag::PORT);
+    if (peerPort != lldpmap.end()) {
+      portInfo.expectedLLDPPeerPort() = peerPort->second;
+    }
   }
 
   auto pause = port->getPause();
@@ -1585,19 +1598,6 @@ void ThriftHandler::setPortPrbs(
           static_cast<prbs::PrbsPolynomial>(polynominal)) ==
           capabilities.end()) {
     throw FbossError("Polynomial not supported");
-  }
-  auto switchId = sw_->getScopeResolver()->scope(portId).switchId();
-  auto switchType = sw_->getHwAsicTable()->getHwAsic(switchId)->getSwitchType();
-  // If ASIC is DNX and --skip-drain-check-for-prbs is disabled, check if
-  // interface or device is drained before setting interface PRBS.
-  if (switchType == cfg::SwitchType::VOQ ||
-      switchType == cfg::SwitchType::FABRIC) {
-    auto isDrained =
-        (port->getPortDrainState() == cfg::PortDrainState::DRAINED) ||
-        isSwitchDrained();
-    if (!FLAGS_skip_drain_check_for_prbs && !isDrained) {
-      throw FbossError("Cannot set PRBS on undrained interface");
-    }
   }
   phy::PortPrbsState newPrbsState;
   *newPrbsState.enabled() = enable;

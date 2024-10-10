@@ -20,6 +20,23 @@ using namespace std::literals;
 
 namespace rackmon {
 
+bool ModbusDeviceFilter::contains(const ModbusDevice& dev) const {
+  // If neither is provided, its considered as a
+  // shortcut of "all".
+  if (!addrFilter && !typeFilter) {
+    return true;
+  }
+  if (addrFilter &&
+      addrFilter->find(dev.getDeviceAddress()) != addrFilter->end()) {
+    return true;
+  }
+  if (typeFilter &&
+      typeFilter->find(dev.getDeviceType()) != typeFilter->end()) {
+    return true;
+  }
+  return false;
+}
+
 void Rackmon::loadInterface(const nlohmann::json& config) {
   std::shared_lock lk(threadMutex_);
   if (scanThread_ != nullptr || monitorThread_ != nullptr) {
@@ -77,21 +94,25 @@ bool Rackmon::probe(Modbus& interface, uint8_t addr) {
   if (!interface.isPresent()) {
     return false;
   }
-  const RegisterMap& rmap = registerMapDB_.at(addr);
-  std::vector<uint16_t> v(1);
-  try {
-    ReadHoldingRegistersReq req(addr, rmap.probeRegister, v.size());
-    ReadHoldingRegistersResp resp(addr, v);
-    interface.command(
-        req, resp, rmap.defaultBaudrate, kProbeTimeout, rmap.parity);
-    std::unique_lock lock(devicesMutex_);
-    devices_[addr] = std::make_unique<ModbusDevice>(interface, addr, rmap);
-    logInfo << std::hex << std::setw(2) << std::setfill('0') << "Found "
-            << int(addr) << " on " << interface.name() << std::endl;
-    return true;
-  } catch (std::exception&) {
-    return false;
+  for (auto it = registerMapDB_.find(addr); it != registerMapDB_.end(); ++it) {
+    const auto& rmap = *it;
+    std::vector<uint16_t> v(1);
+    try {
+      ReadHoldingRegistersReq req(addr, rmap.probeRegister, v.size());
+      ReadHoldingRegistersResp resp(addr, v);
+      interface.command(req, resp, rmap.baudrate, kProbeTimeout, rmap.parity);
+      {
+        std::unique_lock lock(devicesMutex_);
+        devices_[addr] = std::make_unique<ModbusDevice>(interface, addr, rmap);
+      }
+      logInfo << std::hex << std::setw(2) << std::setfill('0') << "Found "
+              << int(addr) << " on " << interface.name() << std::endl;
+      return true;
+    } catch (std::exception&) {
+      // Exceptions are expected for unfound addresses.
+    }
   }
+  return false;
 }
 
 bool Rackmon::probe(uint8_t addr) {
@@ -114,7 +135,7 @@ std::vector<uint8_t> Rackmon::inspectDormant() {
     // If its more than 300s since last activity, start probing it.
     // change to something larger if required.
     if ((it.second->lastActive() + kDormantMinInactiveTime) < curr) {
-      const RegisterMap& rmap = registerMapDB_.at(it.first);
+      const RegisterMap& rmap = it.second->getRegisterMap();
       uint16_t probe = rmap.probeRegister;
       std::vector<uint16_t> v(1);
       try {
@@ -143,7 +164,7 @@ void Rackmon::monitor() {
     if (!dev_it.second->isActive()) {
       continue;
     }
-    dev_it.second->reloadRegisters();
+    dev_it.second->reloadAllRegisters();
   }
   lastMonitorTime_ = std::time(nullptr);
 }
@@ -357,26 +378,25 @@ void Rackmon::getValueData(
     const ModbusDeviceFilter& devFilter,
     const ModbusRegisterFilter& regFilter,
     bool latestValueOnly) const {
-  auto isInFilter = [&devFilter](const ModbusDevice& dev) {
-    return devFilter.contains(dev.getDeviceAddress()) ||
-        devFilter.contains(dev.getDeviceType());
-  };
   data.clear();
   std::shared_lock lock(devicesMutex_);
-  if (!devFilter) {
-    std::transform(
-        devices_.begin(),
-        devices_.end(),
-        std::back_inserter(data),
-        [&regFilter, latestValueOnly](auto& kv) {
-          return kv.second->getValueData(regFilter, latestValueOnly);
-        });
-  } else {
-    for (auto& kv : devices_) {
-      ModbusDevice& dev = *kv.second;
-      if (isInFilter(dev)) {
-        data.push_back(dev.getValueData(regFilter, latestValueOnly));
-      }
+  for (const auto& kv : devices_) {
+    const ModbusDevice& dev = *kv.second;
+    if (devFilter.contains(dev)) {
+      data.push_back(dev.getValueData(regFilter, latestValueOnly));
+    }
+  }
+}
+
+void Rackmon::reload(
+    const ModbusDeviceFilter& devFilter,
+    const ModbusRegisterFilter& regFilter) {
+  std::shared_lock lock(devicesMutex_);
+  for (const auto& kv : devices_) {
+    ModbusDevice& dev = *kv.second;
+    if (devFilter.contains(dev)) {
+      logInfo << "Force Reloading: " << +dev.getDeviceAddress() << std::endl;
+      dev.forceReloadRegisters(regFilter);
     }
   }
 }

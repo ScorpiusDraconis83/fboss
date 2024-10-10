@@ -55,6 +55,7 @@ bool EbroAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::ECMP_MEMBER_WIDTH_INTROSPECTION:
     case HwAsic::Feature::FABRIC_PORT_MTU:
     case HwAsic::Feature::SAI_MPLS_INSEGMENT:
+    case HwAsic::Feature::SAI_PORT_SPEED_CHANGE:
     case HwAsic::Feature::ROUTE_METADATA:
     case HwAsic::Feature::P4_WARMBOOT:
     case HwAsic::Feature::IN_PAUSE_INCREMENTS_DISCARDS:
@@ -83,6 +84,7 @@ bool EbroAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::ACL_METADATA_QUALIFER:
     case HwAsic::Feature::PORT_SERDES_ZERO_PREEMPHASIS:
     case HwAsic::Feature::SAI_ECMP_HASH_ALGORITHM:
+    case HwAsic::Feature::ENABLE_DELAY_DROP_CONGESTION_THRESHOLD:
       return true;
     case HwAsic::Feature::ACL_BYTE_COUNTER:
     case HwAsic::Feature::RESERVED_ENCAP_INDEX_RANGE:
@@ -162,7 +164,6 @@ bool EbroAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::EGRESS_FORWARDING_DROP_COUNTER:
     case HwAsic::Feature::ANY_TRAP_DROP_COUNTER:
     case HwAsic::Feature::SAI_PRBS:
-    case HwAsic::Feature::SAI_PORT_SPEED_CHANGE:
     case HwAsic::Feature::FABRIC_PORTS:
     case HwAsic::Feature::RCI_WATERMARK_COUNTER:
     case HwAsic::Feature::DTL_WATERMARK_COUNTER:
@@ -184,6 +185,8 @@ bool EbroAsic::isSupportedNonFabric(Feature feature) const {
     case HwAsic::Feature::INGRESS_PRIORITY_GROUP_DROPPED_PACKETS:
     case HwAsic::Feature::NO_RX_REASON_TRAP:
     case HwAsic::Feature::EGRESS_GVOQ_WATERMARK_BYTES:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_SHARED_WATERMARK:
+    case HwAsic::Feature::MULTIPLE_EGRESS_BUFFER_POOL:
       return false;
     case HwAsic::Feature::SAI_ACL_ENTRY_SRC_PORT_QUALIFIER:
       /*

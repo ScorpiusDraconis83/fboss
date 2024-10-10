@@ -88,6 +88,7 @@ bool Jericho3Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::ROUTE_METADATA:
     case HwAsic::Feature::NO_RX_REASON_TRAP:
     case HwAsic::Feature::EGRESS_GVOQ_WATERMARK_BYTES:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_SHARED_WATERMARK:
       return true;
     // Features not expected to work on SIM
     case HwAsic::Feature::SHARED_INGRESS_EGRESS_BUFFER_POOL:
@@ -187,6 +188,8 @@ bool Jericho3Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::SAI_ECMP_HASH_ALGORITHM:
     case HwAsic::Feature::SCHEDULER_PPS:
     case HwAsic::Feature::DATA_CELL_FILTER:
+    case HwAsic::Feature::MULTIPLE_EGRESS_BUFFER_POOL:
+    case HwAsic::Feature::ENABLE_DELAY_DROP_CONGESTION_THRESHOLD:
       return false;
   }
   return false;
@@ -279,7 +282,7 @@ HwAsic::RecyclePortInfo Jericho3Asic::getRecyclePortInfo() const {
   return {
       .coreId = 2,
       .corePortIndex = 2,
-      .speedMbps = 10000 // 10G
+      .speedMbps = 100000 // 100G
   };
 }
 

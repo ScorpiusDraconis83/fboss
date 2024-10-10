@@ -21,7 +21,8 @@ Mirror::Mirror(
     std::optional<folly::IPAddress> srcIp,
     std::optional<TunnelUdpPorts> udpPorts,
     uint8_t dscp,
-    bool truncate)
+    bool truncate,
+    std::optional<uint32_t> samplingRate)
     : ThriftStructNode<Mirror, state::MirrorFields>() {
   // span mirror is resolved as soon as it is created
   // erspan and sflow are resolved when tunnel is set
@@ -30,9 +31,13 @@ Mirror::Mirror(
   set<switch_state_tags::truncate>(truncate);
   set<switch_state_tags::configHasEgressPort>(false);
   set<switch_state_tags::isResolved>(false);
+  if (samplingRate.has_value()) {
+    set<switch_state_tags::samplingRate>(samplingRate.value());
+  }
 
   if (egressPortDesc.has_value()) {
     set<switch_state_tags::egressPortDesc>(egressPortDesc.value().toThrift());
+    set<switch_state_tags::egressPort>(egressPortDesc.value().phyPortID());
     set<switch_state_tags::configHasEgressPort>(true);
   }
   if (destinationIp) {
@@ -51,6 +56,13 @@ Mirror::Mirror(
 
 std::string Mirror::getID() const {
   return get<switch_state_tags::name>()->cref();
+}
+
+std::optional<PortID> Mirror::getEgressPort() const {
+  if (auto port = get<switch_state_tags::egressPort>()) {
+    return PortID(port->cref());
+  }
+  return std::nullopt;
 }
 
 std::optional<PortDescriptor> Mirror::getEgressPortDesc() const {
@@ -87,6 +99,10 @@ bool Mirror::getTruncate() const {
 
 void Mirror::setTruncate(bool truncate) {
   set<switch_state_tags::truncate>(truncate);
+}
+
+void Mirror::setEgressPort(PortID egressPort) {
+  set<switch_state_tags::egressPort>(egressPort);
 }
 
 void Mirror::setEgressPortDesc(const PortDescriptor& egressPortDesc) {
@@ -163,6 +179,13 @@ Mirror::Type Mirror::type() const {
     return Mirror::Type::ERSPAN;
   }
   return Mirror::Type::SFLOW;
+}
+
+std::optional<uint32_t> Mirror::getSamplingRate() const {
+  if (auto samplingRate = get<switch_state_tags::samplingRate>()) {
+    return samplingRate->cref();
+  }
+  return std::nullopt;
 }
 
 template class ThriftStructNode<Mirror, state::MirrorFields>;

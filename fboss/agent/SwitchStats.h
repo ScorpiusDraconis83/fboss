@@ -293,6 +293,14 @@ class SwitchStats : public boost::noncopyable {
     packetRxHeartbeatDelay_.addValue(delay);
   }
 
+  void dsfSubReconnectThreadHeartbeatDelay(int delay) {
+    dsfSubReconnectThreadHeartbeatDelay_.addValue(delay);
+  }
+
+  void dsfSubStreamThreadHeartbeatDelay(int delay) {
+    dsfSubStreamThreadHeartbeatDelay_.addValue(delay);
+  }
+
   void bgEventBacklog(int value) {
     bgEventBacklog_.addValue(value);
   }
@@ -313,6 +321,14 @@ class SwitchStats : public boost::noncopyable {
     neighborCacheEventBacklog_.addValue(value);
   }
 
+  void dsfSubReconnectThreadEventBacklog(int value) {
+    dsfSubReconnectThreadEventBacklog_.addValue(value);
+  }
+
+  void dsfSubStreamThreadEventBacklog(int value) {
+    dsfSubStreamThreadEventBacklog_.addValue(value);
+  }
+
   void maxNumOfPhysicalHostsPerQueue(int value) {
     maxNumOfPhysicalHostsPerQueue_.addValue(value);
   }
@@ -323,6 +339,14 @@ class SwitchStats : public boost::noncopyable {
 
   void linkActiveStateChange() {
     linkActiveStateChange_.addValue(1);
+  }
+
+  void switchReachabilityChangeProcessed() {
+    switchReachabilityChangeProcessed_.addValue(1);
+  }
+
+  int64_t getSwitchReachabilityChangeProcessed() {
+    return getCumulativeValue(switchReachabilityChangeProcessed_);
   }
 
   void pcapDistFailure() {
@@ -428,6 +452,26 @@ class SwitchStats : public boost::noncopyable {
     multiSwitchStatus_.addValue(enabled ? 1 : 0);
   }
 
+  void hiPriPktsReceived() {
+    hiPriPktsReceived_.addValue(1);
+  }
+
+  void midPriPktsReceived() {
+    midPriPktsReceived_.addValue(1);
+  }
+
+  void loPriPktsReceived() {
+    loPriPktsReceived_.addValue(1);
+  }
+
+  void midPriPktsDropped() {
+    midPriPktsDropped_.addValue(1);
+  }
+
+  void loPriPktsDropped() {
+    loPriPktsDropped_.addValue(1);
+  }
+
   void switchConfiguredMs(uint64_t ms) {
     switchConfiguredMs_.addValue(ms);
   }
@@ -519,6 +563,10 @@ class SwitchStats : public boost::noncopyable {
 
   void hwAgentTxPktSent(int switchIndex) {
     thriftStreamConnectionStatus_[switchIndex].txPktEventSent();
+  }
+
+  void hwAgentRxBadPktReceived(int switchIndex) {
+    thriftStreamConnectionStatus_[switchIndex].rxBadPktReceived();
   }
 
   void dsfSessionGrExpired() {
@@ -633,6 +681,9 @@ class SwitchStats : public boost::noncopyable {
     void switchReachabilityChangeEventReceived() {
       switchReachabilityChangeEventsReceived_.addValue(1);
     }
+    void rxBadPktReceived() {
+      rxBadPktReceived_.addValue(1);
+    }
     int64_t getStatsEventSinkDisconnectCount() const {
       return getCumulativeValue(statsEventSinkDisconnects_);
     }
@@ -663,6 +714,9 @@ class SwitchStats : public boost::noncopyable {
     int64_t getRxPktEventReceivedCount() const {
       return getCumulativeValue(rxPktEventsReceived_);
     }
+    int64_t getrxBadPktReceivedCount() const {
+      return getCumulativeValue(rxBadPktReceived_);
+    }
     int64_t getTxPktEventSentCount() const {
       return getCumulativeValue(txPktEventsSent_);
     }
@@ -691,6 +745,7 @@ class SwitchStats : public boost::noncopyable {
     TLTimeseries rxPktEventsReceived_;
     TLTimeseries txPktEventsSent_;
     TLTimeseries switchReachabilityChangeEventsReceived_;
+    TLTimeseries rxBadPktReceived_;
   };
 
   const int numSwitches_;
@@ -827,6 +882,14 @@ class SwitchStats : public boost::noncopyable {
    * Arp Cache thread heartbeat delay in milliseconds
    */
   TLHistogram neighborCacheHeartbeatDelay_;
+  /**
+   * DSF Subscriber Reconnect thread heartbeat delay in milliseconds
+   */
+  TLHistogram dsfSubReconnectThreadHeartbeatDelay_;
+  /**
+   * DSF Subscriber Stream thread heartbeat delay in milliseconds
+   */
+  TLHistogram dsfSubStreamThreadHeartbeatDelay_;
 
   /**
    * Number of events queued in background thread
@@ -847,6 +910,14 @@ class SwitchStats : public boost::noncopyable {
    * Number of events queued in fboss Arp Cache thread
    */
   TLHistogram neighborCacheEventBacklog_;
+  /**
+   * Number of events queued in DSF Subscriber Reconnect thread
+   */
+  TLHistogram dsfSubReconnectThreadEventBacklog_;
+  /**
+   * Number of events queued in DSF Subscriber stream serve thread
+   */
+  TLHistogram dsfSubStreamThreadEventBacklog_;
 
   /*
    * Maximum number of physical hosts assigned to a port egress queue
@@ -863,6 +934,11 @@ class SwitchStats : public boost::noncopyable {
    * Link state active/inactive change count
    */
   TLTimeseries linkActiveStateChange_;
+
+  /**
+   * Switch reachability change count
+   */
+  TLTimeseries switchReachabilityChangeProcessed_;
 
   // Individual port stats objects, indexed by PortID
   PortStatsMap ports_;
@@ -939,6 +1015,11 @@ class SwitchStats : public boost::noncopyable {
   TLTimeseries switchConfiguredMs_;
   TLTimeseries dsfGrExpired_;
   TLTimeseries dsfUpdateFailed_;
+  TLTimeseries hiPriPktsReceived_;
+  TLTimeseries midPriPktsReceived_;
+  TLTimeseries loPriPktsReceived_;
+  TLTimeseries midPriPktsDropped_;
+  TLTimeseries loPriPktsDropped_;
 
   // TODO: delete this once multi_switch becomes default
   TLTimeseries multiSwitchStatus_;

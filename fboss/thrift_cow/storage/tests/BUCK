@@ -8,9 +8,6 @@ cpp_unittest(
         "CowStorageMgrTests.cpp",
         "CowStorageTests.cpp",
     ],
-    preprocessor_flags = [
-        "-DENABLE_PATCH_APIS",
-    ],
     deps = [
         "//fboss/fsdb/oper:extended_path_builder",
         "//fboss/fsdb/tests:thriftpath_test_thrift-cpp2-reflection",
@@ -23,7 +20,7 @@ cpp_unittest(
         "//folly:string",
         "//folly/json:dynamic",
         "//folly/logging:logging",
+        "//thrift/lib/cpp2/folly_dynamic:folly_dynamic",
         "//thrift/lib/cpp2/protocol:protocol",
-        "//thrift/lib/cpp2/reflection:folly_dynamic",
     ],
 )

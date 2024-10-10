@@ -4,6 +4,7 @@
 #include <folly/gen/Base.h>
 #include <optional>
 #include "fboss/agent/AgentConfig.h"
+#include "fboss/agent/AgentFeatures.h"
 #include "fboss/agent/CommonInit.h"
 #include "fboss/agent/HwAsicTable.h"
 #include "fboss/agent/Main.h"
@@ -40,7 +41,7 @@ void AgentEnsembleTest::setupAgentEnsemble() {
   folly::SingletonVault::singleton()->reenableInstances();
 
   setCmdLineFlagOverrides();
-  utilCreateDir(getAgentTestDir());
+  preInitSetup();
   AgentEnsembleSwitchConfigFn initialConfigFn =
       [this](const AgentEnsemble& ensemble) { return initialConfig(ensemble); };
 
@@ -51,13 +52,14 @@ void AgentEnsembleTest::setupAgentEnsemble() {
       (HwSwitch::FeaturesDesired::PACKET_RX_DESIRED |
        HwSwitch::FeaturesDesired::LINKSCAN_DESIRED),
       false /* failHwCallsOnWarmboot*/);
-  utilCreateDir(getAgentTestDir());
   XLOG(DBG2) << "Agent has been setup and ready for the test";
 }
 
 void AgentEnsembleTest::setCmdLineFlagOverrides() const {
   // Looped ports are the common case in tests
   FLAGS_disable_looped_fabric_ports = false;
+  // Set HW agent connection timeout to 120 seconds
+  FLAGS_hw_agent_connection_timeout_ms = 120000;
 }
 
 void AgentEnsembleTest::TearDown() {
@@ -92,6 +94,10 @@ cfg::SwitchConfig AgentEnsembleTest::initialConfig(
     [[maybe_unused]] const AgentEnsemble& ensemble) {
   auto agentConf = AgentConfig::fromDefaultFile();
   return agentConf->thrift.sw().value();
+}
+
+void AgentEnsembleTest::preInitSetup() {
+  utilCreateDir(getAgentTestDir());
 }
 
 // We are now returning a map of portId to port stats. Need to modify callers
@@ -283,6 +289,25 @@ void AgentEnsembleTest::waitForLinkStatus(
   throw FbossError(msg);
 }
 
+void AgentEnsembleTest::getAllHwPortStats(
+    std::map<std::string, HwPortStats>& hwPortStats) const {
+  checkWithRetry(
+      [&hwPortStats, this]() {
+        hwPortStats.clear();
+        getSw()->getAllHwPortStats(hwPortStats);
+        for (const auto& [port, portStats] : hwPortStats) {
+          if (*portStats.timestamp__ref() ==
+              hardware_stats_constants::STAT_UNINITIALIZED()) {
+            return false;
+          }
+        }
+        return !hwPortStats.empty();
+      },
+      120,
+      std::chrono::milliseconds(1000),
+      " fetch all port stats");
+}
+
 // Provided the timestamp of the last port stats collection, get another unique
 // set of valid port stats
 std::map<std::string, HwPortStats> AgentEnsembleTest::getNextUpdatedHwPortStats(
@@ -291,6 +316,8 @@ std::map<std::string, HwPortStats> AgentEnsembleTest::getNextUpdatedHwPortStats(
   // TODO(Elangovan) do we need 120 retries?
   checkWithRetry(
       [&portStats, timestamp, this]() {
+        // clear the port stats between each retry
+        portStats.clear();
         getSw()->getAllHwPortStats(portStats);
         // Since each port can have a unique timestamp, compare with the first
         // port
@@ -333,6 +360,29 @@ void AgentEnsembleTest::assertNoInDiscards(int maxNumDiscards) {
                  << " out bytes: " << *stats.outBytes_() << " at timestamp "
                  << *stats.timestamp_();
       EXPECT_LE(inDiscards, maxNumDiscards);
+    }
+  }
+}
+
+void AgentEnsembleTest::assertNoInErrors(int maxNumDiscards) {
+  // When port stat is not updated yet post warmboot (collect timestamp will be
+  // -1), retry another round on all ports.
+  int numRounds = 0;
+  auto lastStatRefTime = hardware_stats_constants::STAT_UNINITIALIZED();
+
+  // Gather 2 round of valid port stats and ensure the discards are within
+  // maxNumDiscards
+  for (numRounds = 0; numRounds < 2; numRounds++) {
+    auto portStats = getNextUpdatedHwPortStats(lastStatRefTime);
+    lastStatRefTime = *portStats.begin()->second.timestamp__ref();
+
+    for (auto [port, stats] : portStats) {
+      auto inErrors = *stats.inErrors_();
+      XLOG(DBG2) << "Port: " << port << " in errors: " << inErrors
+                 << " in bytes: " << *stats.inBytes_()
+                 << " out bytes: " << *stats.outBytes_() << " at timestamp "
+                 << *stats.timestamp_();
+      EXPECT_LE(inErrors, maxNumDiscards);
     }
   }
 }

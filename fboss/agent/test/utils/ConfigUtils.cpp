@@ -376,14 +376,16 @@ cfg::DsfNode dsfNodeConfig(
     auto fromAsicSystemPortRange = fromAsic.getSystemPortRange();
     if (fromAsicSystemPortRange.has_value()) {
       cfg::Range64 range;
-      auto blockSize = *fromAsicSystemPortRange->maximum() -
-          *fromAsicSystemPortRange->minimum();
+      int numCores = fromAsic.getNumCores();
+      auto blockSize = (*fromAsicSystemPortRange->maximum() -
+                        *fromAsicSystemPortRange->minimum() + 1) /
+          numCores;
       range.minimum() = systemPortMin.has_value()
           ? kSysPortOffset + systemPortMin.value()
           : kSysPortOffset + switchId * blockSize;
       range.maximum() = systemPortMax.has_value()
           ? kSysPortOffset + systemPortMax.value()
-          : *range.minimum() + blockSize;
+          : *range.minimum() + numCores * blockSize - 1;
       systemPortRange = range;
     }
     auto localMac = utility::kLocalCpuMac();
@@ -1283,6 +1285,84 @@ bool checkConfigHasAclEntry(
     }
   }
   return false;
+}
+
+void configurePortProfile(
+    const PlatformMapping* platformMapping,
+    bool supportsAddRemovePort,
+    cfg::SwitchConfig& config,
+    cfg::PortProfileID profileID,
+    std::vector<PortID> allPortsInGroup,
+    PortID controllingPortID) {
+  auto controllingPort = findCfgPort(config, controllingPortID);
+  for (auto portID : allPortsInGroup) {
+    // We might have removed a subsumed port already in a previous
+    // iteration of the loop.
+    auto cfgPort = findCfgPortIf(config, portID);
+    if (cfgPort == config.ports()->end()) {
+      return;
+    }
+
+    const auto& platPortEntry = platformMapping->getPlatformPort(portID);
+    auto supportedProfiles = *platPortEntry.supportedProfiles();
+    auto profile = supportedProfiles.find(profileID);
+    if (profile == supportedProfiles.end()) {
+      XLOG(WARNING) << "Port " << static_cast<int>(portID)
+                    << " doesn't support profile "
+                    << apache::thrift::util::enumNameSafe(profileID)
+                    << ", disabling it instead";
+      // Port doesn't support this speed, just disable it.
+      cfgPort->state() = cfg::PortState::DISABLED;
+      continue;
+    }
+    cfgPort->profileID() = profileID;
+    cfgPort->speed() = getSpeed(profileID);
+    cfgPort->ingressVlan() = *controllingPort->ingressVlan();
+    cfgPort->state() = cfg::PortState::ENABLED;
+    removeSubsumedPorts(config, profile->second, supportsAddRemovePort);
+  }
+}
+
+void setupMultipleEgressPoolAndQueueConfigs(
+    cfg::SwitchConfig& config,
+    const std::vector<int>& losslessQueueIds) {
+  const std::string kLosslessPoolName{"egress_lossless_pool"};
+  const std::string kLossyPoolName{"egress_lossy_pool"};
+
+  // Create pool configs for 2 egress buffer pools
+  cfg::BufferPoolConfig losslessPoolCfg;
+  losslessPoolCfg.sharedBytes() = 256 * 1024 * 1024;
+  cfg::BufferPoolConfig lossyPoolCfg;
+  lossyPoolCfg.sharedBytes() = 80 * 1024 * 1024;
+  std::map<std::string, cfg::BufferPoolConfig> bufferPoolCfgMap =
+      config.bufferPoolConfigs().ensure();
+  bufferPoolCfgMap.insert(std::make_pair(kLosslessPoolName, losslessPoolCfg));
+  bufferPoolCfgMap.insert(std::make_pair(kLossyPoolName, lossyPoolCfg));
+  config.bufferPoolConfigs() = std::move(bufferPoolCfgMap);
+
+  // Attach lossless pool to lossless queues and lossy pool to the rest
+  std::vector<cfg::PortQueue> queues;
+  for (int qid = 0; qid < 8; qid++) {
+    cfg::PortQueue queueCfg;
+    queueCfg.id() = qid;
+    queueCfg.name() = folly::to<std::string>("queue", qid);
+    queueCfg.streamType() = cfg::StreamType::UNICAST;
+    queueCfg.scheduling() = cfg::QueueScheduling::STRICT_PRIORITY;
+    if (std::find(losslessQueueIds.begin(), losslessQueueIds.end(), qid) !=
+        losslessQueueIds.end()) {
+      queueCfg.bufferPoolName() = kLosslessPoolName;
+    } else {
+      queueCfg.bufferPoolName() = kLossyPoolName;
+    }
+    queues.push_back(queueCfg);
+  }
+  const std::string kPortQueueName{"egress_port_queue_config"};
+  config.portQueueConfigs()[kPortQueueName] = std::move(queues);
+  for (auto& portCfg : *config.ports()) {
+    if (portCfg.portType() == cfg::PortType::INTERFACE_PORT) {
+      portCfg.portQueueConfigName() = kPortQueueName;
+    }
+  }
 }
 
 } // namespace facebook::fboss::utility

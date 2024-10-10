@@ -121,6 +121,10 @@ class CmdShowPort : public CmdHandler<CmdShowPort, CmdShowPortTraits> {
             fmt::format("ProfileID:      \t\t {}", portInfo.get_profileId()));
         detailedOutput.emplace_back(
             fmt::format("ProfileID:      \t\t {}", hwLogicalPortId));
+        detailedOutput.emplace_back(
+            fmt::format("Core ID:             \t\t {}", portInfo.get_coreId()));
+        detailedOutput.emplace_back(fmt::format(
+            "Virtual device ID:    \t\t {}", portInfo.get_virtualDeviceId()));
         if (portInfo.get_pause()) {
           detailedOutput.emplace_back(
               fmt::format("Pause:          \t\t {}", *portInfo.get_pause()));
@@ -229,19 +233,22 @@ class CmdShowPort : public CmdHandler<CmdShowPort, CmdShowPortTraits> {
       out << folly::join("\n", detailedOutput) << std::endl;
     } else {
       Table table;
-      table.setHeader(
-          {"ID",
-           "Name",
-           "AdminState",
-           "LinkState",
-           "ActiveState",
-           "Transceiver",
-           "TcvrID",
-           "Speed",
-           "ProfileID",
-           "HwLogicalPortId",
-           "Drained",
-           "Errors"});
+      table.setHeader({
+          "ID",
+          "Name",
+          "AdminState",
+          "LinkState",
+          "ActiveState",
+          "Transceiver",
+          "TcvrID",
+          "Speed",
+          "ProfileID",
+          "HwLogicalPortId",
+          "Drained",
+          "Errors",
+          "Core Id",
+          "Virtual device Id",
+      });
 
       for (auto const& portInfo : model.get_portEntries()) {
         std::string hwLogicalPortId;
@@ -260,7 +267,9 @@ class CmdShowPort : public CmdHandler<CmdShowPort, CmdShowPortTraits> {
              portInfo.get_profileId(),
              hwLogicalPortId,
              portInfo.get_isDrained(),
-             getStyledErrors(portInfo.get_activeErrors())});
+             getStyledErrors(portInfo.get_activeErrors()),
+             portInfo.get_coreId(),
+             portInfo.get_virtualDeviceId()});
       }
       out << table << std::endl;
     }
@@ -277,6 +286,12 @@ class CmdShowPort : public CmdHandler<CmdShowPort, CmdShowPortTraits> {
     throw std::runtime_error(
         "Unsupported AdminState: " +
         std::to_string(static_cast<int>(adminState)));
+  }
+  std::string getOptionalIntStr(std::optional<int> val) {
+    if (val.has_value()) {
+      return folly::to<std::string>(*val);
+    }
+    return "--";
   }
 
   Table::StyledCell getStyledLinkState(std::string linkState) {
@@ -375,6 +390,10 @@ class CmdShowPort : public CmdHandler<CmdShowPort, CmdShowPortTraits> {
         portDetails.activeState() = activeState;
         portDetails.speed() = utils::getSpeedGbps(portInfo.get_speedMbps());
         portDetails.profileId() = portInfo.get_profileID();
+        portDetails.coreId() =
+            getOptionalIntStr(portInfo.coreId().to_optional());
+        portDetails.virtualDeviceId() =
+            getOptionalIntStr(portInfo.virtualDeviceId().to_optional());
         if (portInfo.activeErrors()->size()) {
           std::vector<std::string> errorStrs;
           std::for_each(

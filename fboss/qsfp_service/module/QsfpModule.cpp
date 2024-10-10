@@ -43,6 +43,7 @@ DEFINE_int32(
     time_for_tcvr_ready_after_fw_upgrade_s,
     60,
     "max time after firmware upgrade sequence when the the tcvr is expected to be ready for link up");
+DEFINE_bool(remediation_enabled, true, "Flag to disable/enable remediation.");
 
 using folly::IOBuf;
 using std::lock_guard;
@@ -492,6 +493,16 @@ void QsfpModule::updateCachedTransceiverInfoLocked(ModuleStatus moduleStatus) {
     }
     tcvrStats.portNameToMediaLanes() = *tcvrState.portNameToMediaLanes();
 
+    for (const auto& [portName, lanes] : *tcvrStats.portNameToHostLanes()) {
+      int lastDataPathResetTime = 0;
+      for (const auto& lane : lanes) {
+        // Get the most recent reset time (max) for any of the port lanes.
+        lastDataPathResetTime = std::max<long>(
+            lastDataPathResetTime, getLastDatapathResetTime(lane));
+      }
+      tcvrStats.lastDatapathResetTime()[portName] = lastDataPathResetTime;
+    }
+
     auto diagCapability = getDiagsCapability();
     if (diagCapability.has_value()) {
       tcvrState.diagCapability() = diagCapability.value();
@@ -842,23 +853,29 @@ void QsfpModule::refreshLocked() {
   }
 }
 
-void QsfpModule::clearTransceiverPrbsStats(phy::Side side) {
+void QsfpModule::clearTransceiverPrbsStats(
+    const std::string& portName,
+    phy::Side side) {
+  QSFP_LOG(INFO, this) << " Clearing prbs stats for port " << portName << " "
+                       << ((side == phy::Side::LINE) ? "Line" : "Host");
   auto systemPrbs = systemPrbsStats_.wlock();
   auto linePrbs = linePrbsStats_.wlock();
+  auto tcvrLanes = getTcvrLanesForPort(portName, side);
 
-  auto clearLaneStats = [this](std::vector<phy::PrbsLaneStats>& laneStats) {
-    for (auto& laneStat : laneStats) {
-      laneStat.ber() = 0;
-      laneStat.maxBer() = 0;
-      laneStat.snr().reset();
-      laneStat.maxSnr().reset();
-      laneStat.numLossOfLock() = 0;
-      laneStat.timeSinceLastClear() = 0;
+  auto clearLaneStats =
+      [this, &tcvrLanes](std::vector<phy::PrbsLaneStats>& laneStats) {
+        for (auto& laneStat : laneStats) {
+          auto laneId = *laneStat.laneId();
+          if (tcvrLanes.find(laneId) == tcvrLanes.end()) {
+            continue;
+          }
+          laneStat = phy::PrbsLaneStats();
+          laneStat.laneId() = laneId;
 
-      QSFP_LOG(INFO, this) << " Lane " << *laneStat.laneId()
-                           << " ber and maxBer cleared";
-    }
-  };
+          QSFP_LOG(INFO, this)
+              << " Lane " << *laneStat.laneId() << " ber and maxBer cleared";
+        }
+      };
   if (side == phy::Side::SYSTEM) {
     clearLaneStats(*systemPrbs->laneStats());
   } else {
@@ -993,7 +1010,7 @@ bool QsfpModule::shouldRemediate(time_t pauseRemidiation) {
 }
 
 bool QsfpModule::shouldRemediateLocked(time_t pauseRemidiation) {
-  if (!supportRemediate()) {
+  if (!FLAGS_remediation_enabled || !supportRemediate()) {
     return false;
   }
 
@@ -1341,6 +1358,10 @@ void QsfpModule::programTransceiver(
       }
       updateCachedTransceiverInfoLocked({});
     }
+
+    // We are done programming the transceivers. Clear the pending datapath mask
+    // and start fresh for the next programTransceiver call
+    datapathResetPendingMask_ = 0;
   };
 
   auto i2cEvb = qsfpImpl_->getI2cEventBase();

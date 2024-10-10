@@ -193,6 +193,9 @@ class HwAsic {
     // explicty ACL config programmed by FBOSS
     NO_RX_REASON_TRAP,
     EGRESS_GVOQ_WATERMARK_BYTES,
+    INGRESS_PRIORITY_GROUP_SHARED_WATERMARK,
+    MULTIPLE_EGRESS_BUFFER_POOL,
+    ENABLE_DELAY_DROP_CONGESTION_THRESHOLD,
   };
 
   enum class AsicMode {
@@ -207,6 +210,11 @@ class HwAsic {
     ASIC_VENDOR_MARVELL,
     ASIC_VENDOR_MOCK,
     ASIC_VENDOR_FAKE,
+  };
+  enum FabricNodeRole {
+    SINGLE_STAGE_L1,
+    DUAL_STAGE_L1,
+    DUAL_STAGE_L2,
   };
   virtual ~HwAsic() {}
   static std::unique_ptr<HwAsic> makeAsic(
@@ -247,6 +255,7 @@ class HwAsic {
   virtual bool mmuQgroupsEnabled() const {
     return false;
   }
+  virtual FabricNodeRole getFabricNodeRole() const;
   // Get the smallest packet buffer unit for ASIC, cell size for BCM
   virtual uint32_t getPacketBufferUnitSize() const = 0;
 

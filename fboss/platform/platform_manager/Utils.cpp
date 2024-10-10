@@ -65,7 +65,7 @@ void verifyPlatformNameMatches(
 
 PlatformConfig Utils::getConfig() {
   std::string platformNameFromBios =
-      helpers::PlatformNameLib().getPlatformNameFromBios();
+      helpers::PlatformNameLib().getPlatformNameFromBios(true);
   std::string configJson =
       ConfigLib().getPlatformManagerConfig(platformNameFromBios);
   PlatformConfig config;
@@ -170,11 +170,30 @@ std::string Utils::resolveWatchdogCharDevPath(const std::string& sysfsPath) {
   return charDevPath;
 }
 
+bool Utils::checkDeviceReadiness(
+    std::function<bool()>&& isDeviceReadyFunc,
+    const std::string& onWaitMsg,
+    std::chrono::seconds maxWaitSecs) {
+  if (isDeviceReadyFunc()) {
+    return true;
+  }
+  XLOG(INFO) << onWaitMsg;
+  std::chrono::milliseconds waitIntervalMs = std::chrono::milliseconds(50);
+  auto start = std::chrono::steady_clock::now();
+  do {
+    std::this_thread::sleep_for(waitIntervalMs);
+    if (isDeviceReadyFunc()) {
+      return true;
+    }
+  } while (std::chrono::steady_clock::now() <= start + maxWaitSecs);
+  return false;
+}
+
 int Utils::getGpioLineValue(const std::string& charDevPath, int lineIndex)
     const {
   struct gpiod_chip* chip = gpiod_chip_open(charDevPath.c_str());
-  GpiodLine line(chip, lineIndex, "gpioline");
-  int value = line.getValue();
+  // Ensure GpiodLine is destroyed before gpiod_chip_close
+  int value = GpiodLine(chip, lineIndex, "gpioline").getValue();
   gpiod_chip_close(chip);
   return value;
 };

@@ -155,7 +155,7 @@
             },
             "systemPortRange": {
               "minimum": 10,
-              "maximum": 54
+              "maximum": 53
             },
             "switchMac": "02:00:00:00:00:01",
             "connectionHandle": "15:00"
@@ -168,6 +168,10 @@
         
       ]
     },
+    "sdkVersion": {
+      "asicSdk": "sdk",
+      "saiSdk": "sai"
+    },
     "dsfNodes": {
       "0": {
           "name": "intfNode0",
@@ -178,7 +182,7 @@
           ],
           "systemPortRange": {
             "minimum": 10,
-            "maximum": 54
+            "maximum": 53
           },
           "nodeMac": "18*800G-8",
           "asicType": 14,
@@ -242,6 +246,9 @@
             "fabric_connectivity_based_on_integrity": "0",
             "fabric_distributed_system_enable": "1",
             "fail_on_unsupported_attribute": "1",
+            "fw_auto_isolation_arm_core_to_use.0": "5",
+            "fw_auto_isolation_image_filename.0": "/tmp/db/jericho3ai_a0/BCM8889X_fi.elf",
+            "fw_auto_isolation_log_filename.0": "/tmp/edk_fi.log",
             "l3_ecmp_max_group_size": "512",
             "lane_to_serdes_map_fabric_lane0.BCM8889X": "rx0:tx5",
             "lane_to_serdes_map_fabric_lane1.BCM8889X": "rx1:tx3",
@@ -1194,8 +1201,10 @@
             "port_init_speed_cd.BCM8889X": "400000",
             "port_init_speed_ce.BCM8889X": "100000",
             "port_init_speed_d3c.BCM8889X": "800000",
+            "port_init_speed_eventor.BCM8889X": "100000",
             "port_init_speed_fabric.BCM8889X": "106250",
             "port_init_speed_le.BCM8889X": "50000",
+            "port_init_speed_rcy.BCM8889X": "100000",
             "port_init_speed_sat.BCM8889X": "400000",
             "port_init_speed_xe.BCM8889X": "25000",
             "port_init_speed_xe13.BCM8889X": "10000",

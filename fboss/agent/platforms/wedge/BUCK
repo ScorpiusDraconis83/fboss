@@ -59,11 +59,6 @@ wedge_platform_src = [
     "WedgePort.cpp",
     "WedgeTomahawkPlatform.cpp",
     "WedgePlatformInit.cpp",
-    "galaxy/GalaxyLCPlatform.cpp",
-    "galaxy/GalaxyFCPlatform.cpp",
-    "galaxy/GalaxyPort.cpp",
-    "galaxy/facebook/GalaxyPlatform.cpp",
-    "galaxy/facebook/GalaxyPort.cpp",
     "wedge100/Wedge100Platform.cpp",
     "wedge100/Wedge100Port.cpp",
     "wedge100/facebook/Wedge100Port.cpp",
@@ -93,7 +88,6 @@ wedge_platform_src = [
 
 wedge_platform_headers = [
     "WedgePortMapping.h",
-    "galaxy/GalaxyPlatform.h",
     "wedge40/FakeWedge40Platform.h",
 ]
 
@@ -122,7 +116,6 @@ cpp_library(
         "//fboss/agent/platforms/common/darwin:darwin_platform_mapping",
         "//fboss/agent/platforms/common/elbert:elbert_platform_mapping",
         "//fboss/agent/platforms/common/fuji:fuji_platform_mapping",
-        "//fboss/agent/platforms/common/galaxy:galaxy_platform_mapping",
         "//fboss/agent/platforms/common/minipack:minipack_platform_mapping",
         "//fboss/agent/platforms/common/utils:wedge-led-utils",
         "//fboss/agent/platforms/common/wedge100:wedge100_platform_mapping",
@@ -158,7 +151,6 @@ cpp_library(
         "//folly:range",
         "//folly:synchronized",
         "//folly:utility",
-        "//folly/container:array",
         "//folly/futures:core",
         "//folly/gen:base",
         "//folly/io/async:async_base",
@@ -167,7 +159,6 @@ cpp_library(
         "//folly/testing:test_util",
         "//neteng/netwhoami/lib/cpp:recover",
         "//thrift/lib/cpp/util:enum_utils",
-        "//thrift/lib/cpp2/protocol:protocol",
     ],
     exported_external_deps = [
         "boost",
@@ -208,7 +199,6 @@ cpp_library(
         "//fboss/agent/platforms/common/darwin:darwin_platform_mapping",
         "//fboss/agent/platforms/common/elbert:elbert_platform_mapping",
         "//fboss/agent/platforms/common/fuji:fuji_platform_mapping",
-        "//fboss/agent/platforms/common/galaxy:galaxy_platform_mapping",
         "//fboss/agent/platforms/common/minipack:minipack_platform_mapping",
         "//fboss/agent/platforms/common/utils:wedge-led-utils",
         "//fboss/agent/platforms/common/wedge100:wedge100_platform_mapping",
@@ -244,7 +234,6 @@ cpp_library(
         "//folly:range",
         "//folly:synchronized",
         "//folly:utility",
-        "//folly/container:array",
         "//folly/futures:core",
         "//folly/gen:base",
         "//folly/io/async:async_base",
@@ -253,7 +242,6 @@ cpp_library(
         "//folly/testing:test_util",
         "//neteng/netwhoami/lib/cpp:recover",
         "//thrift/lib/cpp/util:enum_utils",
-        "//thrift/lib/cpp2/protocol:protocol",
     ],
     exported_external_deps = [
         "boost",

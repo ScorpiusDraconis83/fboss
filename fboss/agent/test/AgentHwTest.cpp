@@ -6,6 +6,7 @@
 #include "fboss/agent/hw/gen-cpp2/hardware_stats_constants.h"
 #include "fboss/agent/hw/test/ConfigFactory.h"
 #include "fboss/agent/hw/test/HwTestCoppUtils.h"
+#include "fboss/agent/test/utils/AclTestUtils.h"
 #include "fboss/agent/test/utils/StatsTestUtils.h"
 #include "fboss/lib/CommonUtils.h"
 
@@ -89,6 +90,8 @@ void AgentHwTest::setCmdLineFlagOverrides() const {
   FLAGS_detect_wrong_fabric_connections = false;
   // Disable DSF subscription on single-box test
   FLAGS_dsf_subscribe = false;
+  // Set HW agent connection timeout to 120 seconds
+  FLAGS_hw_agent_connection_timeout_ms = 120000;
 }
 
 void AgentHwTest::TearDown() {
@@ -157,6 +160,12 @@ std::vector<PortID> AgentHwTest::masterLogicalPortIds(
   return getAgentEnsemble()->masterLogicalPortIds(portTypes);
 }
 
+std::vector<PortID> AgentHwTest::masterLogicalPortIds(
+    const std::set<cfg::PortType>& portTypes,
+    SwitchID switchId) const {
+  return getAgentEnsemble()->masterLogicalPortIds(portTypes, switchId);
+}
+
 void AgentHwTest::setSwitchDrainState(
     const cfg::SwitchConfig& curConfig,
     cfg::SwitchDrainState drainState) {
@@ -179,10 +188,17 @@ void AgentHwTest::applySwitchDrainState(cfg::SwitchDrainState drainState) {
 
 cfg::SwitchConfig AgentHwTest::initialConfig(
     const AgentEnsemble& ensemble) const {
-  return utility::onePortPerInterfaceConfig(
+  auto config = utility::onePortPerInterfaceConfig(
       ensemble.getSw(),
       ensemble.masterLogicalPortIds(),
       true /*interfaceHasSubnet*/);
+
+  if (FLAGS_enable_acl_table_group) {
+    utility::addAclTableGroup(
+        &config, cfg::AclStage::INGRESS, utility::getAclTableGroupName());
+    utility::addDefaultAclTable(config);
+  }
+  return config;
 }
 
 void AgentHwTest::printProductionFeatures() const {
@@ -284,6 +300,10 @@ AgentHwTest::sendTrafficAndCollectStats(
   std::map<PortID, std::pair<HwPortStats, HwPortStats>> portStats;
   std::vector<HwPortStats> portStatsBefore;
   startSendFn();
+  // In tests like QoS scheduler, smaller number of low priority packets might
+  // go through initially but dopped soon in subsequent looping. So, wait
+  // some time for traffic stablizing before collecting portStatsBefore
+  sleep(timeIntervalInSec);
   for (const auto& port : ports) {
     portStatsBefore.push_back(getLatestPortStats(port));
   }
@@ -494,7 +514,11 @@ SwitchID AgentHwTest::switchIdForPort(PortID port) const {
 }
 
 const HwAsic* AgentHwTest::hwAsicForPort(PortID port) const {
-  return getSw()->getHwAsicTable()->getHwAsic(switchIdForPort(port));
+  return hwAsicForSwitch(switchIdForPort(port));
+}
+
+const HwAsic* AgentHwTest::hwAsicForSwitch(SwitchID switchID) const {
+  return getSw()->getHwAsicTable()->getHwAsic(switchID);
 }
 
 void AgentHwTest::populateArpNeighborsToCache(

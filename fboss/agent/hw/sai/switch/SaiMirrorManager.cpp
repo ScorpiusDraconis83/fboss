@@ -51,7 +51,8 @@ SaiMirrorHandle::SaiMirror SaiMirrorManager::addNodeErSpan(
       mirrorTunnel.greProtocol,
       headerVersion,
       mirrorTunnel.ttl,
-      truncateSize};
+      truncateSize,
+      mirror->getSamplingRate()};
   SaiEnhancedRemoteMirrorTraits::AdapterHostKey k{
       SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE,
       monitorPort,
@@ -80,7 +81,8 @@ SaiMirrorHandle::SaiMirror SaiMirrorManager::addNodeSflow(
       mirrorTunnel.udpPorts.value().udpDstPort,
       headerVersion,
       mirrorTunnel.ttl,
-      truncateSize};
+      truncateSize,
+      mirror->getSamplingRate()};
   SaiSflowMirrorTraits::AdapterHostKey k{
       SAI_MIRROR_SESSION_TYPE_SFLOW,
       monitorPort,
@@ -110,7 +112,9 @@ void SaiMirrorManager::addNode(const std::shared_ptr<Mirror>& mirror) {
   }
   auto mirrorHandle =
       std::make_unique<SaiMirrorHandle>(mirror->getID(), managerTable_);
-  auto monitorPort = getMonitorPort(mirror->getEgressPortDesc().value());
+  auto monitorPort = mirror->getEgressPortDesc().has_value()
+      ? getMonitorPort(mirror->getEgressPortDesc().value())
+      : getMonitorPort(PortDescriptor(mirror->getEgressPort().value()));
   if (mirror->getMirrorTunnel().has_value()) {
     auto mirrorTunnel = mirror->getMirrorTunnel().value();
     if (mirrorTunnel.udpPorts.has_value()) {

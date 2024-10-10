@@ -423,6 +423,8 @@ class BcmSwitch : public BcmSwitchIf {
   HwSwitchWatermarkStats getSwitchWatermarkStats() const override;
   HwFlowletStats getHwFlowletStats() const override;
 
+  HwResourceStats getResourceStats() const override;
+
   std::vector<EcmpDetails> getAllEcmpDetails() const override;
 
   /*
@@ -647,6 +649,8 @@ class BcmSwitch : public BcmSwitchIf {
   AclStats getAclStats() const override;
 
   std::shared_ptr<SwitchState> reconstructSwitchState() const override;
+
+  void injectSwitchReachabilityChangeNotification() override {}
 
  private:
   enum Flags : uint32_t {
@@ -1127,8 +1131,8 @@ class BcmSwitch : public BcmSwitchIf {
   bool isL2EntryPending(const bcm_l2_addr_t* l2Addr);
 
   bool processChangedIngressPoolCfg(
-      std::optional<state::BufferPoolFields> oldBufferPoolCfgPtr,
-      std::optional<state::BufferPoolFields> newBufferPoolCfgPtr);
+      std::optional<BufferPoolFields> oldBufferPoolCfgPtr,
+      std::optional<BufferPoolFields> newBufferPoolCfgPtr);
 
   void processControlPlaneEntryChanged(
       const std::shared_ptr<ControlPlane>& oldCPU,
@@ -1180,7 +1184,7 @@ class BcmSwitch : public BcmSwitchIf {
   std::unique_ptr<BcmBstStatsMgr> bstStatsMgr_;
 
   std::unique_ptr<std::thread> linkScanBottomHalfThread_;
-  FbossEventBase linkScanBottomHalfEventBase_;
+  FbossEventBase linkScanBottomHalfEventBase_{"BcmLinkScanBottomHalfEventBase"};
 
   std::unique_ptr<BcmSwitchSettings> switchSettings_;
 

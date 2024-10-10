@@ -19,13 +19,11 @@
 #include "fboss/agent/platforms/sai/SaiBcmDarwinPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmElbertPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmFujiPlatformPort.h"
-#include "fboss/agent/platforms/sai/SaiBcmGalaxyPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmMinipackPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmMontblancPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmWedge100PlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmWedge400PlatformPort.h"
-#include "fboss/agent/platforms/sai/SaiBcmWedge40PlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiBcmYampPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiCloudRipperPlatformPort.h"
 #include "fboss/agent/platforms/sai/SaiElbert8DDPhyPlatformPort.h"
@@ -54,6 +52,11 @@ DEFINE_string(
     firmware_path,
     "/etc/packages/neteng-fboss-wedge_agent/current",
     "Path to load the firmware");
+
+DEFINE_bool(
+    enable_delay_drop_congestion_threshold,
+    false,
+    "Enable new delay drop congestion threshold in CGM");
 
 namespace {
 
@@ -323,14 +326,8 @@ void SaiPlatform::initPorts() {
         platformMode == PlatformType::PLATFORM_CLOUDRIPPER_VOQ ||
         platformMode == PlatformType::PLATFORM_CLOUDRIPPER_FABRIC) {
       saiPort = std::make_unique<SaiCloudRipperPlatformPort>(portId, this);
-    } else if (platformMode == PlatformType::PLATFORM_WEDGE) {
-      saiPort = std::make_unique<SaiBcmWedge40PlatformPort>(portId, this);
     } else if (platformMode == PlatformType::PLATFORM_WEDGE100) {
       saiPort = std::make_unique<SaiBcmWedge100PlatformPort>(portId, this);
-    } else if (
-        platformMode == PlatformType::PLATFORM_GALAXY_LC ||
-        platformMode == PlatformType::PLATFORM_GALAXY_FC) {
-      saiPort = std::make_unique<SaiBcmGalaxyPlatformPort>(portId, this);
     } else if (
         platformMode == PlatformType::PLATFORM_WEDGE400 ||
         platformMode == PlatformType::PLATFORM_WEDGE400_GRANDTETON) {
@@ -580,6 +577,29 @@ SaiSwitchTraits::CreateAttributes SaiPlatform::getSwitchAttributes(
     routeNoImplicitMetaData = true;
   }
 #endif
+  std::optional<SaiSwitchTraits::Attributes::DelayDropCongThreshold>
+      delayDropCongThreshold{std::nullopt};
+#if defined(TAJO_SDK_VERSION_1_42_8)
+  if (getAsic()->isSupported(
+          HwAsic::Feature::ENABLE_DELAY_DROP_CONGESTION_THRESHOLD) &&
+      FLAGS_enable_delay_drop_congestion_threshold) {
+    XLOG(DBG2) << "Enable new CGM delay drop congestion thresholds";
+    delayDropCongThreshold = 1;
+  }
+#endif
+  std::optional<
+      SaiSwitchTraits::Attributes::FabricLinkLayerFlowControlThreshold>
+      fabricLLFC;
+#if defined(BRCM_SAI_SDK_DNX) && defined(BRCM_SAI_SDK_GTE_12_0)
+  if (getAsic()->getSwitchType() == cfg::SwitchType::FABRIC &&
+      getAsic()->getFabricNodeRole() == HwAsic::FabricNodeRole::DUAL_STAGE_L1) {
+    CHECK(getAsic()->getAsicType() == cfg::AsicType::ASIC_TYPE_RAMON3)
+        << " LLFC threshold values for no R3 chips in DUAL_STAGE_L1 role needs to figured out";
+    // Vendor suggested valie
+    constexpr uint32_t kRamon3LlfcThreshold{800};
+    fabricLLFC = std::vector<uint32_t>({kRamon3LlfcThreshold});
+  }
+#endif
 
   return {
       initSwitch,
@@ -642,6 +662,9 @@ SaiSwitchTraits::CreateAttributes SaiPlatform::getSwitchAttributes(
 #if SAI_API_VERSION >= SAI_VERSION(1, 14, 0)
       std::nullopt, // ARS profile
 #endif
+      std::nullopt, // ReachabilityGroupList
+      delayDropCongThreshold, // Delay Drop Cong Threshold
+      fabricLLFC,
   };
 }
 

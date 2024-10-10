@@ -7,13 +7,9 @@ add_library(sai_platform
   fboss/agent/platforms/sai/SaiPlatform.cpp
   fboss/agent/platforms/sai/SaiBcmPlatform.cpp
   fboss/agent/platforms/sai/SaiBcmPlatformPort.cpp
-  fboss/agent/platforms/sai/SaiBcmGalaxyPlatform.cpp
-  fboss/agent/platforms/sai/SaiBcmGalaxyFCPlatform.cpp
-  fboss/agent/platforms/sai/SaiBcmGalaxyLCPlatform.cpp
   fboss/agent/platforms/sai/SaiBcmMinipackPlatform.cpp
   fboss/agent/platforms/sai/SaiBcmYampPlatform.cpp
   fboss/agent/platforms/sai/SaiBcmWedge100Platform.cpp
-  fboss/agent/platforms/sai/SaiBcmWedge40Platform.cpp
   fboss/agent/platforms/sai/SaiBcmWedge400Platform.cpp
   fboss/agent/platforms/sai/SaiBcmWedge400PlatformPort.cpp
   fboss/agent/platforms/sai/SaiBcmDarwinPlatform.cpp
@@ -46,11 +42,9 @@ add_library(sai_platform
 
   fboss/agent/platforms/sai/oss/SaiBcmMinipackPlatform.cpp
   fboss/agent/platforms/sai/oss/SaiTajoPlatform.cpp
-  fboss/agent/platforms/sai/oss/SaiBcmGalaxyPlatformPort.cpp
   fboss/agent/platforms/sai/oss/SaiBcmMinipackPlatformPort.cpp
   fboss/agent/platforms/sai/oss/SaiBcmFujiPlatformPort.cpp
   fboss/agent/platforms/sai/oss/SaiBcmWedge100PlatformPort.cpp
-  fboss/agent/platforms/sai/oss/SaiBcmWedge40PlatformPort.cpp
   fboss/agent/platforms/sai/oss/SaiBcmWedge400PlatformPort.cpp
   fboss/agent/platforms/sai/oss/SaiBcmDarwinPlatform.cpp
   fboss/agent/platforms/sai/oss/SaiBcmDarwinPlatformPort.cpp
@@ -92,7 +86,6 @@ target_link_libraries(sai_platform
   wedge400_platform_mapping
   wedge400c_platform_mapping
   morgan_platform_mapping
-  sandia_platform_mapping
   wedge_led_utils
   bcm_yaml_config
   cloud_ripper_platform_mapping

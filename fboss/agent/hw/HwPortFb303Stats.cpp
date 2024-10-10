@@ -46,6 +46,7 @@ HwPortFb303Stats::kPortMonotonicCounterStatKeys() const {
       kFecUncorrectable(),
       kLeakyBucketFlapCnt(),
       kInLabelMissDiscards(),
+      kInCongestionDiscards(),
       kInAclDiscards(),
       kInTrapDiscards(),
       kOutForwardingDiscards(),
@@ -180,6 +181,10 @@ void HwPortFb303Stats::updateStats(
       timeRetrieved_,
       kInLabelMissDiscards(),
       *curPortStats.inLabelMissDiscards_());
+  updateStat(
+      timeRetrieved_,
+      kInCongestionDiscards(),
+      *curPortStats.inCongestionDiscards_());
   if (curPortStats.inAclDiscards_().has_value()) {
     updateStat(
         timeRetrieved_, kInAclDiscards(), *curPortStats.inAclDiscards_());
@@ -207,7 +212,9 @@ void HwPortFb303Stats::updateStats(
         *curPortStats.fabricLinkDownDroppedCells_());
   }
   // Set fb303 counter stats
-  if (curPortStats.cableLengthMeters().has_value()) {
+  if (curPortStats.cableLengthMeters().has_value() &&
+      curPortStats.cableLengthMeters() !=
+          std::numeric_limits<uint32_t>::max()) {
     fb303::fbData->setCounter(
         statName(kCableLengthMeters(), portName()),
         *curPortStats.cableLengthMeters());
@@ -266,6 +273,9 @@ void HwPortFb303Stats::updateStats(
     updateQueueWatermarkStats(*curPortStats.queueWatermarkBytes_());
   } else if (curPortStats.queueWatermarkLevel_()->size()) {
     updateQueueWatermarkStats(*curPortStats.queueWatermarkLevel_());
+  }
+  if (curPortStats.egressGvoqWatermarkBytes_()->size()) {
+    updateEgressGvoqWatermarkStats(*curPortStats.egressGvoqWatermarkBytes_());
   }
   // Macsec stats
   if (curPortStats.macsecStats()) {

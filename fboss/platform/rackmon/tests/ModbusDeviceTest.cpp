@@ -43,8 +43,7 @@ class ModbusDeviceTest : public ::testing::Test {
     "name": "orv3_psu",
     "address_range": [[110, 140]],
     "probe_register": 104,
-    "default_baudrate": 19200,
-    "preferred_baudrate": 19200,
+    "baudrate": 19200,
     "registers": [
       {
         "begin": 0,
@@ -346,9 +345,9 @@ TEST_F(ModbusDeviceTest, MonitorInvalidRegOnce) {
 
   ModbusDevice dev(get_modbus(), 0x32, get_regmap(), 1);
   // This should see the illegal address error
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   // This should be a no-op.
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
 }
 
 class ModbusDeviceMockTime : public ModbusDevice {
@@ -397,7 +396,7 @@ TEST_F(ModbusDeviceTest, MonitorDataValue) {
   constexpr time_t monInterval = RegisterDescriptor::kDefaultInterval;
   ModbusDeviceMockTime dev(get_modbus(), 0x32, get_regmap(), baseTime);
 
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   ModbusDeviceValueData data = dev.getValueData();
   EXPECT_EQ(data.deviceAddress, 0x32);
   EXPECT_EQ(data.baudrate, 19200);
@@ -442,7 +441,7 @@ TEST_F(ModbusDeviceTest, MonitorDataValue) {
   EXPECT_EQ(filterData4.registerList.size(), 0);
 
   dev.incTime(monInterval);
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   ModbusDeviceValueData data2 = dev.getValueData();
   EXPECT_EQ(data2.deviceAddress, 0x32);
   EXPECT_EQ(data2.baudrate, 19200);
@@ -469,7 +468,7 @@ TEST_F(ModbusDeviceTest, MonitorDataValue) {
       data2.registerList[0].history[0].timestamp);
 
   dev.incTime(monInterval);
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   ModbusDeviceValueData data3 = dev.getValueData();
   EXPECT_EQ(data3.registerList[0].history.size(), 2);
   // TODO We probably need a circular iterator on the history.
@@ -531,7 +530,7 @@ TEST_F(ModbusDeviceTest, MonitorRawData) {
   time_t baseTime = std::time(nullptr);
   ModbusDeviceMockTime dev(get_modbus(), 0x32, get_regmap(), baseTime);
 
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   nlohmann::json data = dev.getRawData();
   EXPECT_EQ(data["addr"], 0x32);
   EXPECT_EQ(data["crc_fails"], 0);
@@ -548,7 +547,7 @@ TEST_F(ModbusDeviceTest, MonitorRawData) {
   EXPECT_EQ(data["ranges"][0]["readings"][0]["data"], "61626364");
 
   dev.incTime(monInterval);
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   nlohmann::json data2 = dev.getRawData();
   EXPECT_EQ(data2["addr"], 0x32);
   EXPECT_EQ(data2["crc_fails"], 0);
@@ -569,7 +568,7 @@ TEST_F(ModbusDeviceTest, MonitorRawData) {
 
   // Dont change time, just a single reload should not reload since
   // time has not changed.
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   data2 = dev.getRawData();
   EXPECT_TRUE(data2["ranges"].is_array() && data2["ranges"].size() == 1);
   EXPECT_EQ(data2["ranges"][0]["begin"], 0);
@@ -586,7 +585,7 @@ TEST_F(ModbusDeviceTest, MonitorRawData) {
   // force the next reload to happen even if our time has not incremented.
   dev.setExclusiveMode(true);
   dev.setExclusiveMode(false);
-  dev.reloadRegisters();
+  dev.reloadAllRegisters();
   nlohmann::json data3 = dev.getRawData();
   EXPECT_TRUE(
       data3["ranges"][0]["readings"].is_array() &&
@@ -630,8 +629,7 @@ TEST(ModbusSpecialHandler, BasicHandlingStringValuePeriodic) {
     "name": "orv3_psu",
     "address_range": [[110, 140]],
     "probe_register": 104,
-    "default_baudrate": 19200,
-    "preferred_baudrate": 19200,
+    "baudrate": 19200,
     "registers": [
       {
         "begin": 0,
@@ -688,8 +686,7 @@ TEST(ModbusSpecialHandler, BasicHandlingIntegerOneShot) {
     "name": "orv3_psu",
     "address_range": [[110, 140]],
     "probe_register": 104,
-    "default_baudrate": 19200,
-    "preferred_baudrate": 19200,
+    "baudrate": 19200,
     "registers": [
       {
         "begin": 0,
@@ -739,148 +736,290 @@ TEST(ModbusSpecialHandler, BasicHandlingIntegerOneShot) {
   special.handle(dev);
 }
 
-static nlohmann::json getBaudrateRegmap() {
+static nlohmann::json getPlanRegmap() {
   std::string regmap_s = R"({
     "name": "orv3_psu",
-    "address_range": [[5, 7]],
-    "probe_register": 104,
-    "default_baudrate": 19200,
-    "preferred_baudrate": 115200,
-    "baud_config": {
-      "reg": 16,
-      "baud_value_map": [
-        [19200, 1],
-        [57600, 2],
-        [115200, 256]
-      ]
-    },
+    "address_range": [[5, 5]],
+    "probe_register": 0,
+    "baudrate": 19200,
     "registers": [
       {
         "begin": 0,
         "length": 2,
         "keep": 2,
-        "format": "STRING",
-        "name": "MFG_MODEL"
+        "format": "LONG",
+        "name": "THING1"
+      },
+      {
+        "begin": 2,
+        "length": 2,
+        "keep": 2,
+        "format": "LONG",
+        "name": "THING2"
       }
     ]
   })";
   return nlohmann::json::parse(regmap_s);
 }
 
-TEST(ModbusDeviceBaudrate, BaudrateNegotiationTest) {
-  RegisterMap regmap = getBaudrateRegmap();
-  Mock2Modbus mockdev;
+TEST_F(ModbusDeviceTest, ReloadPlan) {
+  RegisterMap regmap = getPlanRegmap();
   InSequence seq;
-  // Expect baudrate to be set to preferred 115200. Command
-  // itself sent at the default 19200 baudrate
+  // First reload registers, We read first reg returns 0x12345678
   EXPECT_CALL(
-      mockdev,
+      get_modbus(),
       command(
-          // addr(1) = 0x05
-          // func(1) = 0x06
-          // reg_off(2) = 0x0010 (16),
-          // reg_val(2) = 0x0100 (256)
-          encodeMsgContentEqual(0x050600100100_EM),
+          // addr(1) = 0x5,
+          // func(1) = 0x03,
+          // reg_off(2) = 0x0000,
+          // reg_cnt(2) = 0x0002
+          encodeMsgContentEqual(0x050300000002_EM),
           _,
           19200,
           ModbusTime::zero(),
           _))
       .Times(1)
-      .WillOnce(SetMsgDecode<1>(0x050600100100_EM));
-
-  // Expect request to read register at new baudrate (115200)
+      .WillOnce(SetMsgDecode<1>(0x05030412345678_EM))
+      .RetiresOnSaturation();
+  // First (same) reload registers we read the second reg.
+  // Returns 0x89abcdef
   EXPECT_CALL(
-      mockdev,
+      get_modbus(),
       command(
-          // addr(1) = 0x05
-          // func(1) = 0x03
-          // reg_off(2) = 0x0000 (0),
-          // reg_val(2) = 0x0002 (2)
-          encodeMsgContentEqual(0x050300000002_EM),
+          // addr(1) = 0x5,
+          // func(1) = 0x03,
+          // reg_off(2) = 0x0002,
+          // reg_cnt(2) = 0x0002
+          encodeMsgContentEqual(0x050300020002_EM),
           _,
-          115200,
+          19200,
           ModbusTime::zero(),
           _))
       .Times(1)
-      .WillOnce(SetMsgDecode<1>(0x05030461626364_EM));
-
-  // Expect on destruction for the baudrate to be reset to
-  // the default 19200
+      .WillOnce(SetMsgDecode<1>(0x05030489abcdef_EM))
+      .RetiresOnSaturation();
+  // Now the first two are part of the plan. The second
+  // time we call reloadAllRegisters, we expect to do a
+  // batched read.
   EXPECT_CALL(
-      mockdev,
+      get_modbus(),
       command(
-          // addr(1) = 0x05
-          // func(1) = 0x06
-          // reg_off(2) = 0x0010 (16),
-          // reg_val(2) = 0x0001 (1)
-          encodeMsgContentEqual(0x050600100001_EM),
+          // addr(1) = 0x5,
+          // func(1) = 0x03,
+          // reg_off(2) = 0x0000,
+          // reg_cnt(2) = 0x0004
+          encodeMsgContentEqual(0x050300000004_EM),
           _,
-          115200,
+          19200,
           ModbusTime::zero(),
           _))
       .Times(1)
-      .WillOnce(SetMsgDecode<1>(0x050600100001_EM));
+      .WillOnce(SetMsgDecode<1>(0x050308fedcba9876543210_EM))
+      .RetiresOnSaturation();
+
+  time_t baseTime = std::time(nullptr);
+  constexpr time_t monInterval = RegisterDescriptor::kDefaultInterval;
+  ModbusDeviceMockTime dev(get_modbus(), 0x5, regmap, baseTime);
+
+  // We expect it to reload the registers one by one.
+  // This should cover the first two expect-calls.
+  dev.reloadAllRegisters();
   {
-    ModbusDevice dev(mockdev, 5, regmap, 1);
-    dev.reloadRegisters();
-    ModbusDeviceValueData data = dev.getValueData();
-    EXPECT_EQ(data.deviceAddress, 0x05);
-    EXPECT_EQ(data.baudrate, 115200);
+    auto data = dev.getValueData();
+    EXPECT_EQ(data.deviceAddress, 0x5);
+    EXPECT_EQ(data.registerList.size(), 2);
+
+    EXPECT_EQ(data.registerList[0].regAddr, 0);
+    EXPECT_EQ(data.registerList[0].history.size(), 1);
+    EXPECT_EQ(data.registerList[0].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[0].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[0].value), 0x12345678);
+
+    EXPECT_EQ(data.registerList[1].regAddr, 2);
+    EXPECT_EQ(data.registerList[1].history.size(), 1);
+    EXPECT_EQ(data.registerList[1].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[1].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[1].history[0].value), 0x89abcdef);
+  }
+  dev.incTime(monInterval);
+  // Second reload should exercise the span-read and the final (3d)
+  // expect should be satisfied.
+  dev.reloadAllRegisters();
+  {
+    auto data = dev.getValueData();
+    EXPECT_EQ(data.deviceAddress, 0x5);
+    EXPECT_EQ(data.registerList.size(), 2);
+
+    EXPECT_EQ(data.registerList[0].regAddr, 0);
+    EXPECT_EQ(data.registerList[0].history.size(), 2);
+    EXPECT_EQ(data.registerList[0].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[0].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[0].value), 0x12345678);
+    EXPECT_EQ(
+        data.registerList[0].history[1].timestamp, baseTime + monInterval);
+    EXPECT_EQ(data.registerList[0].history[1].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[1].value), 0xfedcba98);
+
+    EXPECT_EQ(data.registerList[1].regAddr, 2);
+    EXPECT_EQ(data.registerList[1].history.size(), 2);
+    EXPECT_EQ(data.registerList[1].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[1].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[1].history[0].value), 0x89abcdef);
+    EXPECT_EQ(
+        data.registerList[1].history[1].timestamp, baseTime + monInterval);
+    EXPECT_EQ(data.registerList[1].history[1].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[1].history[1].value), 0x76543210);
+  }
+  {
+    ModbusRegisterFilter filter{};
+    filter.addrFilter = {0};
+    auto data = dev.getValueData(filter);
+    EXPECT_EQ(data.deviceAddress, 0x5);
     EXPECT_EQ(data.registerList.size(), 1);
     EXPECT_EQ(data.registerList[0].regAddr, 0);
-    EXPECT_EQ(data.registerList[0].name, "MFG_MODEL");
+    EXPECT_EQ(data.registerList[0].history.size(), 2);
+    EXPECT_EQ(data.registerList[0].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[0].history[0].type, RegisterValueType::LONG);
     EXPECT_EQ(
-        std::get<std::string>(data.registerList[0].history[0].value), "abcd");
+        std::get<int64_t>(data.registerList[0].history[0].value), 0x12345678);
+    EXPECT_EQ(
+        data.registerList[0].history[1].timestamp, baseTime + monInterval);
+    EXPECT_EQ(data.registerList[0].history[1].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[1].value), 0xfedcba98);
+  }
+  {
+    ModbusRegisterFilter filter{};
+    filter.nameFilter = {"THING1"};
+    auto data = dev.getValueData(filter, true);
+    EXPECT_EQ(data.deviceAddress, 0x5);
+    EXPECT_EQ(data.registerList.size(), 1);
+    EXPECT_EQ(data.registerList[0].regAddr, 0);
+    EXPECT_EQ(data.registerList[0].history.size(), 1);
+    EXPECT_EQ(
+        data.registerList[0].history[0].timestamp, baseTime + monInterval);
+    EXPECT_EQ(data.registerList[0].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[0].value), 0xfedcba98);
   }
 }
 
-TEST(ModbusDeviceBaudrate, BaudrateNegotiationRejection) {
-  RegisterMap regmap = getBaudrateRegmap();
-  Mock2Modbus mockdev;
+TEST_F(ModbusDeviceTest, ForceReloadGetValueData) {
+  RegisterMap regmap = getPlanRegmap();
   InSequence seq;
-  // Expect the call to set baudrate at 115200. Fake a ModbusError
-  // exception thrown. This should cause us to stop negotiation
-  // and stick to default.
+  // First reload registers, We read first reg returns 0x12345678
   EXPECT_CALL(
-      mockdev,
+      get_modbus(),
       command(
-          // addr(1) = 0x05
-          // func(1) = 0x06
-          // reg_off(2) = 0x0010 (16),
-          // reg_val(2) = 0x0100 (256)
-          encodeMsgContentEqual(0x050600100100_EM),
-          _,
-          19200,
-          ModbusTime::zero(),
-          _))
-      .Times(1)
-      .WillOnce(Throw(ModbusError(3)));
-
-  // Expect request to read register at default baudrate (19200)
-  EXPECT_CALL(
-      mockdev,
-      command(
-          // addr(1) = 0x05
-          // func(1) = 0x03
-          // reg_off(2) = 0x0000 (0),
-          // reg_val(2) = 0x0002 (2)
+          // addr(1) = 0x5,
+          // func(1) = 0x03,
+          // reg_off(2) = 0x0000,
+          // reg_cnt(2) = 0x0002
           encodeMsgContentEqual(0x050300000002_EM),
           _,
           19200,
           ModbusTime::zero(),
           _))
       .Times(1)
-      .WillOnce(SetMsgDecode<1>(0x05030461626364_EM));
+      .WillOnce(SetMsgDecode<1>(0x05030412345678_EM))
+      .RetiresOnSaturation();
+  // First (same) reload registers we read the second reg.
+  // Returns 0x89abcdef
+  EXPECT_CALL(
+      get_modbus(),
+      command(
+          // addr(1) = 0x5,
+          // func(1) = 0x03,
+          // reg_off(2) = 0x0002,
+          // reg_cnt(2) = 0x0002
+          encodeMsgContentEqual(0x050300020002_EM),
+          _,
+          19200,
+          ModbusTime::zero(),
+          _))
+      .Times(1)
+      .WillOnce(SetMsgDecode<1>(0x05030489abcdef_EM))
+      .RetiresOnSaturation();
+  // Now the first two are part of the plan. The second
+  // time we call reloadAllRegisters, we expect to do a
+  // batched read.
+  EXPECT_CALL(
+      get_modbus(),
+      command(
+          // addr(1) = 0x5,
+          // func(1) = 0x03,
+          // reg_off(2) = 0x0000,
+          // reg_cnt(2) = 0x0004
+          encodeMsgContentEqual(0x050300000004_EM),
+          _,
+          19200,
+          ModbusTime::zero(),
+          _))
+      .Times(1)
+      .WillOnce(SetMsgDecode<1>(0x050308fedcba9876543210_EM))
+      .RetiresOnSaturation();
+
+  time_t baseTime = std::time(nullptr);
+  ModbusDeviceMockTime dev(get_modbus(), 0x5, regmap, baseTime);
+
+  // We expect it to reload the registers one by one.
+  // This should cover the first two expect-calls.
+  dev.reloadAllRegisters();
   {
-    ModbusDevice dev(mockdev, 5, regmap, 1);
-    dev.reloadRegisters();
-    ModbusDeviceValueData data = dev.getValueData();
-    EXPECT_EQ(data.deviceAddress, 0x05);
-    EXPECT_EQ(data.baudrate, 19200);
-    EXPECT_EQ(data.registerList.size(), 1);
+    auto data = dev.getValueData();
+    EXPECT_EQ(data.deviceAddress, 0x5);
+    EXPECT_EQ(data.registerList.size(), 2);
+
     EXPECT_EQ(data.registerList[0].regAddr, 0);
-    EXPECT_EQ(data.registerList[0].name, "MFG_MODEL");
+    EXPECT_EQ(data.registerList[0].history.size(), 1);
+    EXPECT_EQ(data.registerList[0].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[0].history[0].type, RegisterValueType::LONG);
     EXPECT_EQ(
-        std::get<std::string>(data.registerList[0].history[0].value), "abcd");
+        std::get<int64_t>(data.registerList[0].history[0].value), 0x12345678);
+
+    EXPECT_EQ(data.registerList[1].regAddr, 2);
+    EXPECT_EQ(data.registerList[1].history.size(), 1);
+    EXPECT_EQ(data.registerList[1].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[1].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[1].history[0].value), 0x89abcdef);
+  }
+  // We are not ready to reload yet, but we will force reload in our get.
+  dev.incTime(1);
+  {
+    ModbusRegisterFilter filter{};
+    filter.addrFilter = {0, 2};
+    dev.forceReloadRegisters(filter);
+    auto data = dev.getValueData(filter, false);
+    EXPECT_EQ(data.deviceAddress, 0x5);
+    EXPECT_EQ(data.registerList.size(), 2);
+
+    EXPECT_EQ(data.registerList[0].regAddr, 0);
+    EXPECT_EQ(data.registerList[0].history.size(), 2);
+    EXPECT_EQ(data.registerList[0].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[0].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[0].value), 0x12345678);
+    EXPECT_EQ(data.registerList[0].history[1].timestamp, baseTime + 1);
+    EXPECT_EQ(data.registerList[0].history[1].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[0].history[1].value), 0xfedcba98);
+
+    EXPECT_EQ(data.registerList[1].regAddr, 2);
+    EXPECT_EQ(data.registerList[1].history.size(), 2);
+    EXPECT_EQ(data.registerList[1].history[0].timestamp, baseTime);
+    EXPECT_EQ(data.registerList[1].history[0].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[1].history[0].value), 0x89abcdef);
+    EXPECT_EQ(data.registerList[1].history[1].timestamp, baseTime + 1);
+    EXPECT_EQ(data.registerList[1].history[1].type, RegisterValueType::LONG);
+    EXPECT_EQ(
+        std::get<int64_t>(data.registerList[1].history[1].value), 0x76543210);
   }
 }

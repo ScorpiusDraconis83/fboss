@@ -30,6 +30,12 @@ class OpticsFwUpgradeTest : public HwTest {
     // starts later
     gflags::SetCommandLineOptionWithMode(
         "max_concurrent_evb_fw_upgrade", "8", gflags::SET_FLAGS_DEFAULT);
+    gflags::SetCommandLineOptionWithMode(
+        "firmware_upgrade_on_coldboot", "1", gflags::SET_FLAGS_DEFAULT);
+    gflags::SetCommandLineOptionWithMode(
+        "firmware_upgrade_on_link_down", "1", gflags::SET_FLAGS_DEFAULT);
+    gflags::SetCommandLineOptionWithMode(
+        "firmware_upgrade_on_tcvr_insert", "1", gflags::SET_FLAGS_DEFAULT);
     HwTest::SetUp();
     // Revert the max_concurrent_evb_fw_upgrade back to 1 which is the default
     gflags::SetCommandLineOptionWithMode(
@@ -50,6 +56,9 @@ class OpticsFwUpgradeTest : public HwTest {
                << " :upgradeSince = " << upgradeSinceMs;
   }
 
+  // Helper function that returns a list of transceivers that are upgradeable.
+  // The criteria is that the transceiver part number is listed in the
+  // qsfp config as being upgradeable.
   std::vector<int32_t> transceiversToTest() {
     std::vector<int32_t> tcvrsToTest;
     auto allTransceivers = utility::legacyTransceiverIds(
@@ -73,6 +82,9 @@ class OpticsFwUpgradeTest : public HwTest {
         tcvrsToTest.push_back(tcvrID);
       }
     }
+
+    CHECK(!tcvrsToTest.empty()) << "No upgradeable transceivers found";
+
     return tcvrsToTest;
   }
 
@@ -238,9 +250,13 @@ TEST_F(OpticsFwUpgradeTest, upgradeOnLinkDown) {
     auto portsForFwUpgrade = getHwQsfpEnsemble()
                                  ->getWedgeManager()
                                  ->getPortsRequiringOpticsFwUpgrade();
+    std::vector<std::string> fwUpgradePorts;
+    for (auto& [portName, _] : portsForFwUpgrade) {
+      fwUpgradePorts.push_back(portName);
+    }
     EXPECT_TRUE(portsForFwUpgrade.empty())
         << "Some modules still require firmware upgrade: " +
-            folly::join(",", portsForFwUpgrade);
+            folly::join(",", fwUpgradePorts);
 
     // During cold boot setup, update the firmware versions in the config
     auto qsfpCfg =
@@ -264,6 +280,7 @@ TEST_F(OpticsFwUpgradeTest, upgradeOnLinkDown) {
     portsForFwUpgrade = getHwQsfpEnsemble()
                             ->getWedgeManager()
                             ->getPortsRequiringOpticsFwUpgrade();
+
     EXPECT_FALSE(portsForFwUpgrade.empty())
         << "No modules requiring firmware upgrade";
   };

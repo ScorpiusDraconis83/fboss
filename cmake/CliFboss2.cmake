@@ -141,6 +141,8 @@ add_fbthrift_cpp_library(
   fboss/cli/fboss2/commands/show/transceiver/model.thrift
   OPTIONS
     json
+  DEPENDS
+    transceiver_cpp2
 )
 
 add_fbthrift_cpp_library(
@@ -157,6 +159,8 @@ add_fbthrift_cpp_library(
   fboss/cli/fboss2/commands/show/interface/model.thrift
   OPTIONS
     json
+  DEPENDS
+    switch_config_cpp2
 )
 
 add_fbthrift_cpp_library(

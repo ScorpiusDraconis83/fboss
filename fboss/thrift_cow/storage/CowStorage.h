@@ -13,37 +13,12 @@ namespace facebook::fboss::fsdb {
 
 namespace detail {
 
-inline std::optional<StorageError> parseTraverseResult(
-    thrift_cow::ThriftTraverseResult traverseResult) {
-  if (traverseResult == thrift_cow::ThriftTraverseResult::OK) {
-    return std::nullopt;
-  } else if (
-      traverseResult == thrift_cow::ThriftTraverseResult::VISITOR_EXCEPTION) {
-    XLOG(DBG3) << "Visitor exception on traverse";
-    return StorageError::TYPE_ERROR;
-  } else {
-    XLOG(DBG3) << "Visitor error on traverse: "
-               << static_cast<int>(traverseResult);
-    return StorageError::INVALID_PATH;
-  }
-}
+std::optional<StorageError> parseTraverseResult(
+    thrift_cow::ThriftTraverseResult traverseResult);
 
-inline std::optional<StorageError> parsePatchResult(
-    thrift_cow::PatchApplyResult patchResult) {
-  switch (patchResult) {
-    case thrift_cow::PatchApplyResult::OK:
-      return std::nullopt;
-    case thrift_cow::PatchApplyResult::INVALID_STRUCT_MEMBER:
-    case thrift_cow::PatchApplyResult::INVALID_VARIANT_MEMBER:
-    case thrift_cow::PatchApplyResult::NON_EXISTENT_NODE:
-    case thrift_cow::PatchApplyResult::KEY_PARSE_ERROR:
-    case thrift_cow::PatchApplyResult::PATCHING_IMMUTABLE_NODE:
-      return StorageError::INVALID_PATH;
-    case thrift_cow::PatchApplyResult::INVALID_PATCH_TYPE:
-      return StorageError::TYPE_ERROR;
-  }
-  return std::nullopt;
-}
+std::optional<StorageError> parsePatchResult(
+    thrift_cow::PatchApplyResult patchResult);
+
 } // namespace detail
 
 template <typename Root, typename Node = thrift_cow::ThriftStructNode<Root>>
@@ -83,7 +58,6 @@ class CowStorage : public Storage<Root, CowStorage<Root, Node>> {
     root_->publish();
   }
 
-  using Base::add;
   using Base::get;
   using Base::get_encoded;
   using Base::get_encoded_extended;
@@ -188,7 +162,6 @@ class CowStorage : public Storage<Root, CowStorage<Root, Node>> {
     return detail::parseTraverseResult(traverseResult);
   }
 
-#ifdef ENABLE_PATCH_APIS
   std::optional<StorageError> patch_impl(Patch&& patch) {
     auto begin = patch.basePath()->begin();
     auto end = patch.basePath()->end();
@@ -213,7 +186,6 @@ class CowStorage : public Storage<Root, CowStorage<Root, Node>> {
     }
     return detail::parsePatchResult(patchResult);
   }
-#endif
 
   std::optional<StorageError> patch_impl(const fsdb::OperDelta& delta) {
     std::optional<StorageError> result;
@@ -249,18 +221,6 @@ class CowStorage : public Storage<Root, CowStorage<Root, Node>> {
     result = this->set_encoded_impl(
         rawPath.begin(), rawPath.end(), std::move(newState));
     return result;
-  }
-
-  template <typename T>
-  std::optional<StorageError>
-  add_impl(PathIter begin, PathIter end, T&& value) {
-    // TODO: support add to end with "-1" index
-    return this->template set_impl<T>(begin, end, std::forward<T>(value));
-  }
-
-  std::optional<StorageError>
-  add_encoded_impl(PathIter begin, PathIter end, const OperState& state) {
-    return this->set_encoded_impl(begin, end, state);
   }
 
   std::optional<StorageError> remove_impl(PathIter begin, PathIter end) {

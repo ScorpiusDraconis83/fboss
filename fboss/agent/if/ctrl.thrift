@@ -371,6 +371,11 @@ struct PortInfoThrift {
   24: bool isDrained;
   25: optional PortActiveState activeState;
   26: list<PortError> activeErrors;
+  27: optional string expectedLLDPeerName;
+  28: optional string expectedLLDPPeerPort;
+  29: optional i32 coreId;
+  30: optional i32 virtualDeviceId;
+  31: switch_config.PortType portType;
 }
 
 // Port queueing configuration
@@ -399,6 +404,8 @@ struct PortQueueFields {
   15: optional i16 trafficClass;
   16: optional list<i16> pfcPriorities;
   17: optional i32 maxDynamicSharedBytes;
+  18: optional string bufferPoolName;
+  19: optional common.BufferPoolFields bufferPoolConfig;
 }
 
 struct SystemPortThrift {

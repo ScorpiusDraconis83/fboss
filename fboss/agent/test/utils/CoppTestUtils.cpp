@@ -11,6 +11,7 @@
 
 #include "fboss/agent/FbossError.h"
 #include "fboss/agent/HwSwitch.h"
+#include "fboss/agent/LldpManager.h"
 #include "fboss/agent/SwSwitch.h"
 #include "fboss/agent/TxPacket.h"
 #include "fboss/agent/hw/switch_asics/HwAsic.h"
@@ -474,6 +475,67 @@ void addHighPriAclForBgp(
       {cfg::EtherType::IPv4, cfg::EtherType::IPv6});
 }
 
+void addHighPriAclForArp(
+    cfg::ToCpuAction toCpuAction,
+    int highPriQueueId,
+    std::vector<std::pair<cfg::AclEntry, cfg::MatchAction>>& acls,
+    bool isSai) {
+  cfg::AclEntry acl1;
+  acl1.etherType() = cfg::EtherType::ARP;
+  acl1.ipType() = cfg::IpType::ARP_REQUEST;
+  acl1.name() = folly::to<std::string>("cpuPolicing-high-arp-request-acl");
+  auto action = createQueueMatchAction(highPriQueueId, isSai, toCpuAction);
+  acls.push_back(std::make_pair(acl1, action));
+  cfg::AclEntry acl2;
+  acl2.etherType() = cfg::EtherType::ARP;
+  acl2.ipType() = cfg::IpType::ARP_REPLY;
+  acl2.name() = folly::to<std::string>("cpuPolicing-high-arp-reply-acl");
+  acls.push_back(std::make_pair(acl2, action));
+}
+
+void addHighPriAclForLacp(
+    cfg::ToCpuAction toCpuAction,
+    int highPriQueueId,
+    std::vector<std::pair<cfg::AclEntry, cfg::MatchAction>>& acls,
+    bool isSai) {
+  cfg::AclEntry acl;
+  acl.etherType() = cfg::EtherType::LACP;
+  acl.dstMac() = LACPDU::kSlowProtocolsDstMac().toString();
+  acl.name() = folly::to<std::string>("cpuPolicing-high-lacp-acl");
+  auto action = createQueueMatchAction(highPriQueueId, isSai, toCpuAction);
+  acls.push_back(std::make_pair(acl, action));
+}
+
+void addMidPriAclForLldp(
+    cfg::ToCpuAction toCpuAction,
+    int midPriQueueId,
+    std::vector<std::pair<cfg::AclEntry, cfg::MatchAction>>& acls,
+    bool isSai) {
+  cfg::AclEntry acl;
+  acl.etherType() = cfg::EtherType::LLDP;
+  acl.dstMac() = LldpManager::LLDP_DEST_MAC.toString();
+  acl.name() = folly::to<std::string>("cpuPolicing-mid-lldp-acl");
+  auto action = createQueueMatchAction(midPriQueueId, isSai, toCpuAction);
+  acls.push_back(std::make_pair(acl, action));
+}
+
+void addMidPriAclForIp2Me(
+    const HwAsic* hwAsic,
+    cfg::ToCpuAction toCpuAction,
+    int midPriQueueId,
+    std::vector<std::pair<cfg::AclEntry, cfg::MatchAction>>& acls,
+    bool isSai) {
+  cfg::AclEntry acl;
+  acl.lookupClassRoute() = cfg::AclLookupClass::DST_CLASS_L3_LOCAL_1;
+  acl.name() = folly::to<std::string>("cpuPolicing-mid-ip2me-acl");
+  addEtherTypeToAcl(
+      hwAsic,
+      acl,
+      acls,
+      createQueueMatchAction(midPriQueueId, isSai, toCpuAction),
+      {cfg::EtherType::IPv4, cfg::EtherType::IPv6});
+}
+
 void addLowPriAclForUnresolvedRoutes(
     const HwAsic* hwAsic,
     cfg::ToCpuAction toCpuAction,
@@ -682,12 +744,25 @@ std::vector<std::pair<cfg::AclEntry, cfg::MatchAction>> defaultCpuAclsForSai(
         hwAsic, cfg::ToCpuAction::TRAP, acls, true /*isSai*/);
 
     if (hwAsic->isSupported(HwAsic::Feature::NO_RX_REASON_TRAP)) {
+      addHighPriAclForArp(
+
+          cfg::ToCpuAction::TRAP, getCoppHighPriQueueId(hwAsic), acls, true);
       addHighPriAclForBgp(
           hwAsic,
           cfg::ToCpuAction::TRAP,
           getCoppHighPriQueueId(hwAsic),
           acls,
           true);
+      addMidPriAclForIp2Me(
+          hwAsic,
+          cfg::ToCpuAction::TRAP,
+          getCoppMidPriQueueId({hwAsic}),
+          acls,
+          true);
+      addHighPriAclForLacp(
+          cfg::ToCpuAction::TRAP, getCoppHighPriQueueId(hwAsic), acls, true);
+      addMidPriAclForLldp(
+          cfg::ToCpuAction::TRAP, getCoppMidPriQueueId({hwAsic}), acls, true);
     }
   }
 
@@ -927,19 +1002,9 @@ std::vector<cfg::PacketRxReasonToQueue> getCoppRxReasonToQueuesForSai(
     // TODO(daiweix): remove these rx reason traps and replace them by ACLs
     rxReasonToQueues = {
         ControlPlane::makeRxReasonToQueueEntry(
-            cfg::PacketRxReason::ARP, coppHighPriQueueId),
-        ControlPlane::makeRxReasonToQueueEntry(
-            cfg::PacketRxReason::ARP_RESPONSE, coppHighPriQueueId),
-        ControlPlane::makeRxReasonToQueueEntry(
             cfg::PacketRxReason::NDP, coppHighPriQueueId),
         ControlPlane::makeRxReasonToQueueEntry(
-            cfg::PacketRxReason::CPU_IS_NHOP, coppMidPriQueueId),
-        ControlPlane::makeRxReasonToQueueEntry(
-            cfg::PacketRxReason::LACP, coppHighPriQueueId),
-        ControlPlane::makeRxReasonToQueueEntry(
             cfg::PacketRxReason::TTL_1, kCoppLowPriQueueId),
-        ControlPlane::makeRxReasonToQueueEntry(
-            cfg::PacketRxReason::LLDP, coppMidPriQueueId),
         ControlPlane::makeRxReasonToQueueEntry(
             cfg::PacketRxReason::DHCP, coppMidPriQueueId),
         ControlPlane::makeRxReasonToQueueEntry(

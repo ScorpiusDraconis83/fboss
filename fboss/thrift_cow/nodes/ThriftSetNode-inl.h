@@ -13,8 +13,8 @@
 #include <fatal/container/tuple.h>
 #include <folly/Conv.h>
 #include <folly/json/dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include <thrift/lib/cpp2/protocol/detail/protocol_methods.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
 #include <thrift/lib/cpp2/reflection/reflection.h>
 #include "fboss/agent/state/NodeBase-defs.h"
 #include "fboss/thrift_cow/nodes/Serializer.h"
@@ -50,16 +50,18 @@ struct ThriftSetFields {
   using StorageType = std::unordered_set<value_type>;
   using iterator = typename StorageType::iterator;
   using const_iterator = typename StorageType::const_iterator;
+  using Tag = apache::thrift::type::set<
+      apache::thrift::type::infer_tag<ValueTType, true /* GuessStringTag */>>;
 
   // constructors:
   // One takes a thrift type directly, one starts with empty vector
 
   ThriftSetFields() {}
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  explicit ThriftSetFields(T&& thrift) {
+  template <typename T>
+  explicit ThriftSetFields(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     fromThrift(std::forward<T>(thrift));
   }
 
@@ -72,10 +74,10 @@ struct ThriftSetFields {
     return thrift;
   }
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  void fromThrift(T&& thrift) {
+  template <typename T>
+  void fromThrift(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     storage_.clear();
     for (const auto& elem : thrift) {
       emplace(elem);
@@ -86,15 +88,15 @@ struct ThriftSetFields {
 
   folly::dynamic toDynamic() const {
     folly::dynamic out;
-    apache::thrift::to_dynamic<TypeClass>(
-        out, toThrift(), apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::to_dynamic<Tag>(
+        out, toThrift(), facebook::thrift::dynamic_format::JSON_1);
     return out;
   }
 
   void fromDynamic(const folly::dynamic& value) {
     TType thrift;
-    apache::thrift::from_dynamic<TypeClass>(
-        thrift, value, apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::from_dynamic<Tag>(
+        thrift, value, facebook::thrift::dynamic_format::JSON_1);
     fromThrift(thrift);
   }
 
@@ -367,19 +369,19 @@ class ThriftSetNode : public NodeBaseT<
     return this->writableFields()->remove(value);
   }
 
-  void modify(const std::string& token) {
+  void modify(const std::string& token, bool construct = true) {
     if (auto value =
             tryParseKey<ValueTType, typename Fields::ValueTypeClass>(token)) {
-      modifyTyped(value.value());
+      modifyTyped(value.value(), construct);
       return;
     }
 
     throw std::runtime_error(folly::to<std::string>("Invalid key: ", token));
   }
 
-  virtual void modifyTyped(const ValueTType& value) {
+  virtual void modifyTyped(const ValueTType& value, bool construct = true) {
     DCHECK(!this->isPublished());
-    if (auto it = this->find(value); it == this->end()) {
+    if (construct && this->find(value) == this->end()) {
       this->emplace(value);
     }
   }

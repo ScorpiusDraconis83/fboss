@@ -177,40 +177,15 @@ RegisterValue::RegisterValue(const std::vector<uint16_t>& reg)
   makeHex(reg);
 }
 
-Register::Register(const RegisterDescriptor& d)
-    : value_{d.length, d.length},
-      desc(d),
-      timestamp(value_.first.timestamp),
-      value(value_.first.value) {}
+Register::Register(const RegisterDescriptor& d) : desc(d), value(d.length, 0) {}
 
 Register::Register(const Register& other)
-    : value_(other.value_),
-      isFirstActive(other.isFirstActive),
-      desc(other.desc),
-      timestamp(
-          other.isFirstActive ? value_.first.timestamp
-                              : value_.second.timestamp),
-      value(other.isFirstActive ? value_.first.value : value_.second.value) {}
+    : desc(other.desc), value(other.value), timestamp(other.timestamp) {}
 
 Register::Register(Register&& other) noexcept
-    : value_(std::move(other.value_)),
-      isFirstActive(other.isFirstActive),
-      desc(other.desc),
-      timestamp(
-          other.isFirstActive ? value_.first.timestamp
-                              : value_.second.timestamp),
-      value(other.isFirstActive ? value_.first.value : value_.second.value) {}
-
-void Register::updateReferences() {
-  RegisterReading& active = getActive();
-  value = active.value;
-  timestamp = active.timestamp;
-}
-
-void Register::swapActive() {
-  isFirstActive = !isFirstActive;
-  updateReferences();
-}
+    : desc(other.desc),
+      value(std::move(other.value)),
+      timestamp(other.timestamp) {}
 
 Register::operator RegisterValue() const {
   return RegisterValue(value, desc, timestamp);
@@ -242,24 +217,20 @@ void RegisterStore::disable() {
   enabled_ = false;
 }
 
-std::vector<uint16_t>& RegisterStore::beginReloadRegister() {
+std::vector<uint16_t>::iterator RegisterStore::setRegister(
+    std::vector<uint16_t>::iterator start,
+    std::vector<uint16_t>::iterator end,
+    time_t reloadTime) {
   std::unique_lock lk(historyMutex_);
-  return front().getInactive().value;
-}
-
-void RegisterStore::endReloadRegister(time_t reloadTime) {
-  std::unique_lock lk(historyMutex_);
-  front().getInactive().timestamp = reloadTime;
-  // Update the front and bump indexs.
-  front().swapActive();
-  // If we care about changes only and the values
-  // look the same, then ignore it.
-  if (desc_.storeChangesOnly && front() == back()) {
-    // Keep old value. Discard new value.
-    front().swapActive();
-    return;
+  auto& reg = front();
+  size_t size = reg.value.size();
+  if ((reg.value.size() + start) > end) {
+    throw std::out_of_range("Source not large enough to set register");
   }
+  std::copy(start, start + size, reg.value.begin());
+  reg.timestamp = reloadTime;
   ++(*this);
+  return start + size;
 }
 
 Register& RegisterStore::back() {
@@ -293,17 +264,84 @@ RegisterStore::operator RegisterStoreValue() const {
   return ret;
 }
 
-const RegisterMap& RegisterMapDatabase::at(uint8_t addr) const {
-  const auto result = std::find_if(
+RegisterStoreSpan::RegisterStoreSpan(RegisterStore* reg)
+    : spanAddress_(reg->regAddr()),
+      interval_(reg->interval()),
+      span_(reg->length(), 0),
+      registers_{reg},
+      timestamp_(reg->back().timestamp) {}
+
+bool RegisterStoreSpan::addRegister(RegisterStore* reg) {
+  if (reg->interval() != interval_) {
+    return false;
+  }
+  if (reg->regAddr() != spanAddress_ + span_.size()) {
+    return false;
+  }
+  if (span_.size() + reg->length() > kMaxRegisterSpanLength) {
+    return false;
+  }
+  span_.resize(span_.size() + reg->length());
+  registers_.push_back(reg);
+  return true;
+}
+
+bool RegisterStoreSpan::reloadPending(time_t currentTime) {
+  return timestamp_ == 0 || (timestamp_ + interval_) <= currentTime;
+}
+
+std::vector<uint16_t>& RegisterStoreSpan::beginReloadSpan() {
+  return span_;
+}
+
+void RegisterStoreSpan::endReloadSpan(time_t reloadTime) {
+  timestamp_ = reloadTime;
+  for (auto [source, target] = std::pair(span_.begin(), registers_.begin());
+       source != span_.end() && target != registers_.end();
+       ++target) {
+    source = (*target)->setRegister(source, span_.end(), reloadTime);
+  }
+}
+
+bool RegisterStoreSpan::buildRegisterSpanList(
+    std::vector<RegisterStoreSpan>& list,
+    RegisterStore& reg) {
+  // Drop it from a plan if not enabled.
+  if (!reg.isEnabled()) {
+    return false;
+  }
+  if (!std::any_of(list.begin(), list.end(), [&reg](auto& span) {
+        return span.addRegister(&reg);
+      })) {
+    list.emplace_back(&reg);
+  }
+  return true;
+}
+
+RegisterMapDatabase::Iterator& RegisterMapDatabase::Iterator::operator++() {
+  if (it == end) {
+    return *this;
+  }
+  ++it;
+  if (addr.has_value()) {
+    while (it != end) {
+      if ((*it)->applicableAddresses.contains(addr.value())) {
+        break;
+      }
+      ++it;
+    }
+  }
+  return *this;
+}
+
+RegisterMapDatabase::Iterator RegisterMapDatabase::find(uint8_t addr) const {
+  auto result = std::find_if(
       regmaps.begin(),
       regmaps.end(),
       [addr](const std::unique_ptr<RegisterMap>& m) {
         return m->applicableAddresses.contains(addr);
       });
-  if (result == regmaps.end()) {
-    throw std::out_of_range("not found: " + std::to_string(int(addr)));
-  }
-  return **result;
+  return RegisterMapDatabase::Iterator{result, regmaps.cend(), addr};
 }
 
 void RegisterMapDatabase::load(const nlohmann::json& j) {
@@ -475,19 +513,12 @@ void from_json(const json& j, SpecialHandlerInfo& m) {
   j.at("info").get_to(m.info);
 }
 
-void from_json(const json& j, BaudrateConfig& m) {
-  m.isSet = true;
-  j.at("reg").get_to(m.reg);
-  j.at("baud_value_map").get_to(m.baudValueMap);
-}
-
 void from_json(const json& j, RegisterMap& m) {
   j.at("address_range").get_to(m.applicableAddresses);
   j.at("probe_register").get_to(m.probeRegister);
   j.at("name").get_to(m.name);
   m.parity = j.value("parity", Parity::EVEN);
-  j.at("preferred_baudrate").get_to(m.preferredBaudrate);
-  j.at("default_baudrate").get_to(m.defaultBaudrate);
+  j.at("baudrate").get_to(m.baudrate);
   std::vector<RegisterDescriptor> tmp;
   j.at("registers").get_to(tmp);
   for (auto& i : tmp) {
@@ -496,16 +527,12 @@ void from_json(const json& j, RegisterMap& m) {
   if (j.contains("special_handlers")) {
     j.at("special_handlers").get_to(m.specialHandlers);
   }
-  if (j.contains("baud_config")) {
-    j.at("baud_config").get_to(m.baudConfig);
-  }
 }
 void to_json(json& j, const RegisterMap& m) {
   j["address_range"] = m.applicableAddresses;
   j["probe_register"] = m.probeRegister;
   j["name"] = m.name;
-  j["preferred_baudrate"] = m.preferredBaudrate;
-  j["default_baudrate"] = m.preferredBaudrate;
+  j["baudrate"] = m.baudrate;
   j["registers"] = {};
   std::transform(
       m.registerDescriptors.begin(),

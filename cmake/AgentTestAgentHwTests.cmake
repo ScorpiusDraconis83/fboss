@@ -23,6 +23,7 @@ add_library(agent_hw_test_src
   fboss/agent/test/agent_hw_tests/AgentMacLearningTests.cpp
   fboss/agent/test/agent_hw_tests/AgentMacLearningAndNeighborResolutionTests.cpp
   fboss/agent/test/agent_hw_tests/AgentMirroringTests.cpp
+  fboss/agent/test/agent_hw_tests/AgentNeighborTests.cpp
   fboss/agent/test/agent_hw_tests/AgentOlympicQosTests.cpp
   fboss/agent/test/agent_hw_tests/AgentOlympicQosSchedulerTests.cpp
   fboss/agent/test/agent_hw_tests/AgentQueuePerHostL2Tests.cpp
@@ -47,6 +48,9 @@ add_library(agent_hw_test_src
   fboss/agent/test/agent_hw_tests/AgentRxReasonTests.cpp
   fboss/agent/test/agent_hw_tests/AgentRouteScaleTests.cpp
   fboss/agent/test/agent_hw_tests/MultiNodeAgentVoqSwitchTests.cpp
+  fboss/agent/test/agent_hw_tests/AgentHwAclMatchActionsTest.cpp
+  fboss/agent/test/agent_hw_tests/AgentHwAclQualifierTest.cpp
+  fboss/agent/test/agent_hw_tests/AgentHwAclStatTests.cpp
 )
 
 target_link_libraries(agent_hw_test_src
@@ -94,6 +98,7 @@ target_link_libraries(agent_hw_test_src
   pktutil
   mirror_test_utils
   voq_test_utils
+  fib_updater
 )
 
 add_executable(multi_switch_agent_hw_test

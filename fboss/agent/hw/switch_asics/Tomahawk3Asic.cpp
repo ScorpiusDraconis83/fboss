@@ -79,7 +79,6 @@ bool Tomahawk3Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::UDF_HASH_FIELD_QUERY:
     case HwAsic::Feature::SAI_SAMPLEPACKET_TRAP:
     case HwAsic::Feature::SAI_UDF_HASH:
-    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_HEADROOM_WATERMARK:
     case HwAsic::Feature::SEPARATE_BYTE_AND_PACKET_ACL_COUNTER:
     case HwAsic::Feature::SAI_EAPOL_TRAP:
     case HwAsic::Feature::L3_MTU_ERROR_TRAP:
@@ -177,6 +176,10 @@ bool Tomahawk3Asic::isSupported(Feature feature) const {
     case HwAsic::Feature::INGRESS_PRIORITY_GROUP_DROPPED_PACKETS:
     case HwAsic::Feature::NO_RX_REASON_TRAP:
     case HwAsic::Feature::EGRESS_GVOQ_WATERMARK_BYTES:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_SHARED_WATERMARK:
+    case HwAsic::Feature::INGRESS_PRIORITY_GROUP_HEADROOM_WATERMARK:
+    case HwAsic::Feature::MULTIPLE_EGRESS_BUFFER_POOL:
+    case HwAsic::Feature::ENABLE_DELAY_DROP_CONGESTION_THRESHOLD:
       return false;
   }
   return false;

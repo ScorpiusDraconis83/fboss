@@ -112,6 +112,8 @@ class MockHwSwitch : public HwSwitch {
     return 0;
   }
 
+  void injectSwitchReachabilityChangeNotification() override {}
+
   uint32_t generateDeterministicSeed(
       LoadBalancerID loadBalancerID,
       folly::MacAddress mac) const override {
@@ -144,6 +146,8 @@ class MockHwSwitch : public HwSwitch {
   void setInitialState(const std::shared_ptr<SwitchState>& state) {
     setProgrammedState(state);
   }
+
+  MOCK_CONST_METHOD0(getResourceStats, HwResourceStats());
 
  private:
   MOCK_METHOD1(switchRunStateChangedImpl, void(SwitchRunState newState));

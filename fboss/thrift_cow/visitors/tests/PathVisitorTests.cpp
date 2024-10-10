@@ -8,7 +8,7 @@
 
 #include <fboss/thrift_cow/visitors/PathVisitor.h>
 #include <fboss/thrift_cow/visitors/tests/VisitorTestUtils.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include "fboss/agent/gen-cpp2/switch_config_types.h"
 #include "fboss/thrift_cow/nodes/Types.h"
 #include "fboss/thrift_cow/nodes/tests/gen-cpp2/test_fatal_types.h"
@@ -30,6 +30,7 @@ TEST(PathVisitorTests, AccessField) {
   EXPECT_EQ(result, ThriftTraverseResult::OK);
   EXPECT_EQ(dyn.asInt(), 54);
 
+  // inlineInt
   path = {"2"};
   result = RootPathVisitor::visit(
       *nodeA, path.begin(), path.end(), PathVisitMode::LEAF, processPath);
@@ -42,7 +43,44 @@ TEST(PathVisitorTests, AccessField) {
       *nodeA, path.begin(), path.end(), PathVisitMode::LEAF, processPath);
   EXPECT_EQ(result, ThriftTraverseResult::OK);
   EXPECT_EQ(dyn.asInt(), 99);
+
+  // cowMap
+  path = {"cowMap", "1"};
+  result = RootPathVisitor::visit(
+      *nodeA, path.begin(), path.end(), PathVisitMode::LEAF, processPath);
+  EXPECT_EQ(result, ThriftTraverseResult::OK);
+  EXPECT_TRUE(dyn.asBool());
 }
+
+#ifdef __ENABLE_HYBRID_THRIFT_COW_TESTS__
+TEST(PathVisitorTests, HybridMapAccess) {
+  auto structA = createHybridMapTestStruct();
+
+  auto nodeA = std::make_shared<ThriftStructNode<TestStruct>>(structA);
+  folly::dynamic dyn;
+  auto processPath = pvlambda([&dyn](auto& node, auto begin, auto end) {
+    EXPECT_EQ(begin, end);
+    dyn = node.toFollyDynamic();
+  });
+
+  // hybridMap
+  {
+    std::vector<std::string> path = {"hybridMap"};
+    auto result = RootPathVisitor::visit(
+        *nodeA, path.begin(), path.end(), PathVisitMode::LEAF, processPath);
+    EXPECT_EQ(result, ThriftTraverseResult::OK);
+    EXPECT_TRUE(dyn[1].asBool());
+  }
+  {
+    // TODO: handle traversing beyond hybrid node
+    // hybridMap/1
+    std::vector<std::string> path = {"hybridMap", "1"};
+    auto result = RootPathVisitor::visit(
+        *nodeA, path.begin(), path.end(), PathVisitMode::LEAF, processPath);
+    EXPECT_EQ(result, ThriftTraverseResult::VISITOR_EXCEPTION);
+  }
+}
+#endif // __ENABLE_HYBRID_THRIFT_COW_TESTS__
 
 TEST(PathVisitorTests, AccessFieldInContainer) {
   auto structA = createSimpleTestStruct();
@@ -51,8 +89,8 @@ TEST(PathVisitorTests, AccessFieldInContainer) {
   cfg::L4PortRange got;
   auto processPath = pvlambda([&got](auto& node, auto begin, auto end) {
     EXPECT_EQ(begin, end);
-    got = apache::thrift::from_dynamic<cfg::L4PortRange>(
-        node.toFollyDynamic(), apache::thrift::dynamic_format::JSON_1);
+    got = facebook::thrift::from_dynamic<cfg::L4PortRange>(
+        node.toFollyDynamic(), facebook::thrift::dynamic_format::JSON_1);
   });
 
   std::vector<std::string> path{"mapOfEnumToStruct", "3"};

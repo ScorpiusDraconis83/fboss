@@ -12,8 +12,8 @@
 
 #include <fatal/container/tuple.h>
 #include <folly/json/dynamic.h>
+#include <thrift/lib/cpp2/folly_dynamic/folly_dynamic.h>
 #include <thrift/lib/cpp2/protocol/detail/protocol_methods.h>
-#include <thrift/lib/cpp2/reflection/folly_dynamic.h>
 #include <thrift/lib/cpp2/reflection/reflection.h>
 #include "fboss/agent/state/NodeBase-defs.h"
 #include "fboss/thrift_cow/nodes/NodeUtils.h"
@@ -60,6 +60,9 @@ struct ThriftMapFields {
       std::map<key_type, value_type, typename Traits::KeyCompare>;
   using iterator = typename StorageType::iterator;
   using const_iterator = typename StorageType::const_iterator;
+  using Tag = apache::thrift::type::map<
+      apache::thrift::type::infer_tag<key_type, true /* GuessStringTag */>,
+      apache::thrift::type::infer_tag<ValueTType, true /* GuessStringTag */>>;
 
   // whether the contained type is another Cow node, or a primitive node
   static constexpr bool HasChildNodes = ValueTraits::isChild::value;
@@ -69,10 +72,10 @@ struct ThriftMapFields {
 
   ThriftMapFields() {}
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  explicit ThriftMapFields(T&& thrift) {
+  template <typename T>
+  explicit ThriftMapFields(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     fromThrift(std::forward<T>(thrift));
   }
 
@@ -92,10 +95,10 @@ struct ThriftMapFields {
     return thrift;
   }
 
-  template <
-      typename T,
-      typename = std::enable_if_t<std::is_same<std::decay_t<T>, TType>::value>>
-  void fromThrift(T&& thrift) {
+  template <typename T>
+  void fromThrift(T&& thrift)
+    requires(std::is_same_v<std::decay_t<T>, TType>)
+  {
     storage_.clear();
     for (const auto& [key, elem] : thrift) {
       emplace(key, elem);
@@ -106,15 +109,15 @@ struct ThriftMapFields {
 
   folly::dynamic toDynamic() const {
     folly::dynamic out;
-    apache::thrift::to_dynamic<TypeClass>(
-        out, toThrift(), apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::to_dynamic<Tag>(
+        out, toThrift(), facebook::thrift::dynamic_format::JSON_1);
     return out;
   }
 
   void fromDynamic(const folly::dynamic& value) {
     TType thrift;
-    apache::thrift::from_dynamic<TypeClass>(
-        thrift, value, apache::thrift::dynamic_format::JSON_1);
+    facebook::thrift::from_dynamic<Tag>(
+        thrift, value, facebook::thrift::dynamic_format::JSON_1);
     fromThrift(thrift);
   }
 #endif
@@ -438,22 +441,22 @@ class ThriftMapNode
     return size() == 0;
   }
 
-  bool tryModify(const std::string& token) {
+  bool tryModify(const std::string& token, bool construct = true) {
     if (auto parsedKey =
             tryParseKey<key_type, typename Fields::KeyTypeClass>(token)) {
-      modifyTyped(parsedKey.value());
+      modifyTyped(parsedKey.value(), construct);
       return true;
     }
     return false;
   }
 
-  void modify(const std::string& token) {
-    if (!tryModify(token)) {
+  void modify(const std::string& token, bool construct = true) {
+    if (!tryModify(token, construct)) {
       throw std::runtime_error(folly::to<std::string>("Invalid key: ", token));
     }
   }
 
-  virtual void modifyTyped(key_type key) {
+  virtual void modifyTyped(key_type key, bool construct = true) {
     DCHECK(!this->isPublished());
 
     if (auto it = this->find(key); it != this->end()) {
@@ -464,7 +467,7 @@ class ThriftMapNode
           child.swap(clonedChild);
         }
       }
-    } else {
+    } else if (construct) {
       // create unpublished default constructed child if missing
       this->emplace(key).first->second;
     }

@@ -107,11 +107,11 @@ void Platform::init(
     throw FbossError("No SwitchInfo found for switchIndex", switchIndex);
   };
 
+  std::optional<HwAsic::FabricNodeRole> fabricNodeRole;
   if (switchSettings.switchIdToSwitchInfo()->size()) {
     auto switchInfo = getSwitchInfo(switchIndex);
     switchId = std::optional<int64_t>(switchInfo.first);
     switchType = *switchInfo.second.switchType();
-    auto asicType = *switchInfo.second.asicType();
     if (switchType == cfg::SwitchType::VOQ) {
       const auto& dsfNodesConfig = *config_->thrift.sw()->dsfNodes();
       const auto& dsfNodeConfig = dsfNodesConfig.find(*switchId);
@@ -119,12 +119,22 @@ void Platform::init(
           dsfNodeConfig->second.systemPortRange().has_value()) {
         systemPortRange = *dsfNodeConfig->second.systemPortRange();
       }
-    }
-    // SwitchId not supported in fabric mode
-    if (switchType == cfg::SwitchType::FABRIC &&
-        (asicType == cfg::AsicType::ASIC_TYPE_EBRO ||
-         asicType == cfg::AsicType::ASIC_TYPE_GARONNE)) {
-      switchId = std::nullopt;
+    } else if (switchType == cfg::SwitchType::FABRIC) {
+      fabricNodeRole = HwAsic::FabricNodeRole::SINGLE_STAGE_L1;
+      const auto& dsfNodesConfig = *config_->thrift.sw()->dsfNodes();
+      const auto& dsfNodeConfig = dsfNodesConfig.find(*switchId);
+      if (dsfNodeConfig != dsfNodesConfig.end() &&
+          dsfNodeConfig->second.fabricLevel().has_value()) {
+        auto fabricLevel = *dsfNodeConfig->second.fabricLevel();
+        if (fabricLevel == 2) {
+          fabricNodeRole = HwAsic::FabricNodeRole::DUAL_STAGE_L2;
+        } else if (numFabricLevels(*config_->thrift.sw()->dsfNodes()) == 2) {
+          // fabric level can only be 1 or 2
+          CHECK_EQ(fabricLevel, 1);
+          // Dual stage, node fabric level == 1
+          fabricNodeRole = HwAsic::FabricNodeRole::DUAL_STAGE_L1;
+        }
+      }
     }
     if (switchInfo.second.switchMac()) {
       macStr = *switchInfo.second.switchMac();
@@ -140,7 +150,13 @@ void Platform::init(
   XLOG(DBG2) << "Initializing Platform with switch ID: " << switchId.value_or(0)
              << " switch Index: " << switchIndex;
 
-  setupAsic(switchType, switchId, switchIndex, systemPortRange, localMac_);
+  setupAsic(
+      switchType,
+      switchId,
+      switchIndex,
+      systemPortRange,
+      localMac_,
+      fabricNodeRole);
   initImpl(hwFeaturesDesired);
   // We should always initPorts() here instead of leaving the hw/ to call
   initPorts();
