@@ -16,6 +16,7 @@
 #include "fboss/agent/state/StateDelta.h"
 #include "fboss/lib/RefMap.h"
 
+#include <gtest/gtest.h>
 #include <memory>
 #include <ostream>
 
@@ -23,46 +24,7 @@ namespace facebook::fboss {
 class StateDelta;
 class SwitchState;
 class SwitchStats;
-
-class NextHopGroupInfo {
- public:
-  using NextHopGroupId = uint32_t;
-  using NextHopGroupItr = std::map<RouteNextHopSet, NextHopGroupId>::iterator;
-  NextHopGroupInfo(
-      NextHopGroupId id,
-      NextHopGroupItr ngItr,
-      bool isBackupEcmpGroupType = false)
-      : id_(id), ngItr_(ngItr), isBackupEcmpGroupType_(isBackupEcmpGroupType) {}
-  NextHopGroupId getID() const {
-    return id_;
-  }
-  size_t getRouteUsageCount() const {
-    CHECK_GT(routeUsageCount_, 0);
-    return routeUsageCount_;
-  }
-  void incRouteUsageCount() {
-    ++routeUsageCount_;
-  }
-  void decRouteUsageCount() {
-    --routeUsageCount_;
-  }
-  bool isBackupEcmpGroupType() const {
-    return isBackupEcmpGroupType_;
-  }
-  void setIsBackupEcmpGroupType(bool isBackupEcmp) {
-    isBackupEcmpGroupType_ = isBackupEcmp;
-  }
-  const RouteNextHopSet& getNhops() const {
-    return ngItr_->first;
-  }
-
- private:
-  static constexpr int kInvalidRouteUsageCount = 0;
-  NextHopGroupId id_;
-  NextHopGroupItr ngItr_;
-  bool isBackupEcmpGroupType_{false};
-  int routeUsageCount_{kInvalidRouteUsageCount};
-};
+class NextHopGroupInfo;
 
 class EcmpResourceManager : public PreUpdateStateModifier {
  public:
@@ -105,7 +67,6 @@ class EcmpResourceManager : public PreUpdateStateModifier {
 
   struct ConsolidationInfo {
     int maxPenalty() const;
-    int avgPenalty() const;
     bool operator==(const ConsolidationInfo& other) const {
       return std::tie(mergedNhops, groupId2Penalty) ==
           std::tie(other.mergedNhops, other.groupId2Penalty);
@@ -113,12 +74,14 @@ class EcmpResourceManager : public PreUpdateStateModifier {
     RouteNextHopSet mergedNhops;
     std::map<NextHopGroupId, int> groupId2Penalty;
   };
-  std::map<NextHopGroupIds, ConsolidationInfo> getConsolidationInfo(
-      NextHopGroupId grpId) const;
+  using GroupIds2ConsolidationInfo =
+      std::map<NextHopGroupIds, ConsolidationInfo>;
+  GroupIds2ConsolidationInfo getConsolidationInfo(NextHopGroupId grpId) const;
 
  private:
+  FRIEND_TEST(EcmpResourceMgrCandidateMergeTest, optimalMergeSet);
   void nextHopGroupDeleted(NextHopGroupId groupId);
-  bool pruneFromCandidateMerges(NextHopGroupId groupId);
+  bool pruneFromCandidateMerges(const NextHopGroupIds& groupId);
   bool pruneFromMergedGroups(NextHopGroupId groupId);
   template <typename AddrT>
   bool routesEqual(
@@ -197,7 +160,7 @@ class EcmpResourceManager : public PreUpdateStateModifier {
       const StateDelta& delta,
       InputOutputState* inOutState);
   void reclaimEcmpGroups(InputOutputState* inOutState);
-  std::set<NextHopGroupId> createOptimalMergeGroupSet();
+  std::set<NextHopGroupId> getOptimalMergeGroupSet() const;
   template <typename AddrT>
   std::shared_ptr<NextHopGroupInfo> updateForwardingInfoAndInsertDelta(
       RouterID rid,
@@ -270,10 +233,77 @@ class EcmpResourceManager : public PreUpdateStateModifier {
   std::optional<cfg::SwitchingMode> backupEcmpGroupType_;
   SwitchStats* switchStats_;
 };
+
+class NextHopGroupInfo {
+ public:
+  using NextHopGroupId = EcmpResourceManager::NextHopGroupId;
+  using NextHopGroupItr = EcmpResourceManager::NextHops2GroupId::iterator;
+  using Groups2ConsolidationInfoItr =
+      EcmpResourceManager::GroupIds2ConsolidationInfo::iterator;
+  NextHopGroupInfo(
+      NextHopGroupId id,
+      NextHopGroupItr ngItr,
+      bool isBackupEcmpGroupType = false,
+      std::optional<Groups2ConsolidationInfoItr> mergedGroupsToInfoItr =
+          std::nullopt)
+      : id_(id),
+        ngItr_(ngItr),
+        isBackupEcmpGroupType_(isBackupEcmpGroupType),
+        mergedGroupsToInfoItr_(mergedGroupsToInfoItr) {}
+  NextHopGroupId getID() const {
+    return id_;
+  }
+  size_t getRouteUsageCount() const {
+    CHECK_GT(routeUsageCount_, 0);
+    return routeUsageCount_;
+  }
+  void incRouteUsageCount() {
+    ++routeUsageCount_;
+  }
+  void decRouteUsageCount() {
+    --routeUsageCount_;
+  }
+  bool isBackupEcmpGroupType() const {
+    return isBackupEcmpGroupType_;
+  }
+  void setIsBackupEcmpGroupType(bool isBackupEcmp) {
+    isBackupEcmpGroupType_ = isBackupEcmp;
+  }
+  void setMergedGroupInfoItr(std::optional<Groups2ConsolidationInfoItr> gitr) {
+    mergedGroupsToInfoItr_ = gitr;
+  }
+  const RouteNextHopSet& getNhops() const {
+    return ngItr_->first;
+  }
+  bool hasOverrideNextHops() const {
+    return mergedGroupsToInfoItr_.has_value();
+  }
+  bool hasOverrides() const {
+    return isBackupEcmpGroupType() || hasOverrideNextHops();
+  }
+
+  std::optional<RouteNextHopSet> getOverrideNextHops() const {
+    std::optional<RouteNextHopSet> overrideNhops;
+    if (mergedGroupsToInfoItr_.has_value()) {
+      overrideNhops = (*mergedGroupsToInfoItr_)->second.mergedNhops;
+    }
+    return overrideNhops;
+  }
+
+ private:
+  static constexpr int kInvalidRouteUsageCount = 0;
+  NextHopGroupId id_;
+  NextHopGroupItr ngItr_;
+  bool isBackupEcmpGroupType_{false};
+  std::optional<Groups2ConsolidationInfoItr> mergedGroupsToInfoItr_;
+  int routeUsageCount_{kInvalidRouteUsageCount};
+};
+
 std::unique_ptr<EcmpResourceManager> makeEcmpResourceManager(
     const std::shared_ptr<SwitchState>& state,
     const HwAsic* asic,
     SwitchStats* stats = nullptr);
+
 std::ostream& operator<<(
     std::ostream& os,
     const EcmpResourceManager::ConsolidationInfo& info);

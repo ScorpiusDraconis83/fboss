@@ -48,7 +48,7 @@ class RouteNextHopEntry
       std::optional<AclLookupClass> classID = std::nullopt,
       std::optional<cfg::SwitchingMode> overrideEcmpSwitchingMode =
           std::nullopt,
-      const std::optional<NextHopSet>& overrideNextHops = std::nullopt);
+      std::optional<NextHopSet> overrideNextHops = std::nullopt);
   RouteNextHopEntry(
       NextHopSet nhopSet,
       AdminDistance distance,
@@ -56,7 +56,7 @@ class RouteNextHopEntry
       std::optional<AclLookupClass> classID = std::nullopt,
       std::optional<cfg::SwitchingMode> overrideEcmpSwitchingMode =
           std::nullopt,
-      const std::optional<NextHopSet>& overrideNextHops = std::nullopt);
+      std::optional<NextHopSet> overrideNextHops = std::nullopt);
 
   RouteNextHopEntry(
       NextHop nhop,
@@ -65,7 +65,7 @@ class RouteNextHopEntry
       std::optional<AclLookupClass> classID = std::nullopt,
       std::optional<cfg::SwitchingMode> overrideEcmpSwitchingMode =
           std::nullopt,
-      const std::optional<NextHopSet>& overrideNextHops = std::nullopt);
+      std::optional<NextHopSet> overrideNextHops = std::nullopt);
 
   RouteNextHopEntry(RouteNextHopEntry&& other) noexcept {
     this->fromThrift(other.toThrift());
@@ -113,6 +113,7 @@ class RouteNextHopEntry
 
   const std::optional<NextHopSet> getOverrideNextHops() const;
   void setOverrideNextHops(const std::optional<NextHopSet>& nhops);
+  bool hasOverrideSwitchingModeOrNhops() const;
   NextHopSet normalizedNextHops() const;
 
   // Get the sum of the weights of all the nexthops in the entry
@@ -173,11 +174,11 @@ class RouteNextHopEntry
   static state::RouteNextHopEntry getRouteNextHopEntryThrift(
       Action action,
       AdminDistance distance,
-      NextHopSet nhopSet = NextHopSet(),
-      std::optional<RouteCounterID> counterID = std::nullopt,
-      std::optional<AclLookupClass> classID = std::nullopt,
-      std::optional<cfg::SwitchingMode> overrideEcmpSwitchingMode =
-          std::nullopt);
+      NextHopSet nhopSet,
+      std::optional<RouteCounterID> counterID,
+      std::optional<AclLookupClass> classID,
+      std::optional<cfg::SwitchingMode> overrideEcmpSwitchingMode,
+      const std::optional<NextHopSet>& overridNextHops);
   void normalize(
       std::vector<NextHopWeight>& scaledWeights,
       NextHopWeight totalWeight) const;
